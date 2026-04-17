@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Student Mastery</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      :root {
+        --bg: #0f1117;
+        --bg2: #161b27;
+        --bg3: #1c2333;
+        --border: rgba(255,255,255,0.08);
+        --border2: rgba(255,255,255,0.14);
+        --text: #e8eaf0;
+        --text2: #8b92a8;
+        --text3: #545c72;
+        --teal: #0d9488;
+        --teal2: #14b8a6;
+        --teal-bg: rgba(13,148,136,0.12);
+        --teal-border: rgba(13,148,136,0.3);
+        --purple: #7c3aed;
+        --purple-bg: rgba(124,58,237,0.12);
+        --amber: #d97706;
+        --amber-bg: rgba(217,119,6,0.12);
+        --red: #dc2626;
+        --red-bg: rgba(220,38,38,0.12);
+        --green: #16a34a;
+        --green-bg: rgba(22,163,74,0.12);
+        --radius: 10px;
+        --radius-lg: 14px;
+        --shadow: 0 1px 3px rgba(0,0,0,0.4);
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      #root { min-height: 100vh; }
+
+      /* Global scrollbar */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+      /* Global input/button resets */
+      input, select, textarea, button {
+        font-family: inherit;
+        font-size: inherit;
+        color: inherit;
+      }
+      button { cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
