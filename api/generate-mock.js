@@ -109,12 +109,16 @@ async function generatePaper(userId, subject, options) {
   const allTopics = topics.map(t => t.name)
   const unusedTopics = allTopics.filter(t => !usedTopics.includes(t))
 
-  // Get docs for context
-  const docs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+  // Get docs — prefer 'past-paper' type for mock generation
+  const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+  const pastPapers = allDocs.filter(d => d.docType === 'past-paper')
+  const notesDocs = allDocs.filter(d => d.docType === 'notes' || !d.docType)
+  // Use past papers first, fall back to notes, then nothing
+  const docsToUse = pastPapers.length > 0 ? pastPapers : notesDocs
   let docContext = ''
   let sourceType = 'syllabus'
-  if (docs.length > 0) {
-    const allChunks = docs.flatMap(d => d.chunks || [])
+  if (docsToUse.length > 0) {
+    const allChunks = docsToUse.flatMap(d => d.chunks || [])
     let charCount = 0
     const selected = []
     for (const chunk of allChunks) {
@@ -122,7 +126,10 @@ async function generatePaper(userId, subject, options) {
       selected.push(chunk)
       charCount += chunk.length
     }
-    if (charCount > 100) { docContext = selected.join('\n\n'); sourceType = 'docs' }
+    if (charCount > 100) {
+      docContext = selected.join('\n\n')
+      sourceType = pastPapers.length > 0 ? 'past-paper' : 'docs'
+    }
   }
 
   const paperNumber = replaceSlot !== null && replaceSlot !== undefined

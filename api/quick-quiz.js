@@ -29,8 +29,10 @@ export default async function handler(req, res) {
     const subject = subjects.find(s => s.id === subjectId)
     if (!subject) { res.status(404).json({ error: 'Subject not found' }); return }
 
-    // Get ingested docs
-    const docs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+    // Get ingested docs — prefer 'notes' type for quizzes
+    const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+    const notesDocs = allDocs.filter(d => d.docType === 'notes' || !d.docType)
+    const docs = notesDocs.length > 0 ? notesDocs : allDocs // fallback to all if no notes
 
     // Build context from doc chunks (take first 6000 chars worth)
     let context = ''

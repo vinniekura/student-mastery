@@ -155,16 +155,26 @@ export default function SubjectHub() {
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       padding: '8px 10px', borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)'
                     }}>
-                      <div>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text)' }}>{doc.filename}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>
-                          {doc.chunkCount} chunks · {Math.round(doc.charCount / 1000)}k chars
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.filename}</div>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}>
+                          <span style={{
+                            fontSize: 10, padding: '1px 7px', borderRadius: 10, fontWeight: 600,
+                            background: doc.docType === 'past-paper' ? 'rgba(124,58,237,0.1)' : 'var(--teal-bg)',
+                            color: doc.docType === 'past-paper' ? '#7c3aed' : 'var(--teal2)',
+                            border: `1px solid ${doc.docType === 'past-paper' ? 'rgba(124,58,237,0.2)' : 'var(--teal-border)'}`
+                          }}>
+                            {doc.docType === 'past-paper' ? 'Past paper' : 'Study notes'}
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                            {doc.chunkCount} chunks · {Math.round(doc.charCount / 1000)}k chars
+                          </span>
                         </div>
                       </div>
                       <button
                         onClick={() => deleteDoc(doc.id)}
                         disabled={deletingDoc === doc.id}
-                        style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}
+                        style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 16, padding: '0 4px', marginLeft: 8, flexShrink: 0 }}
                       >×</button>
                     </div>
                   ))}
@@ -208,9 +218,13 @@ export default function SubjectHub() {
             </div>
 
             <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12 }}>
-              {docs.length > 0
-                ? `Using ${docs.length} uploaded document${docs.length !== 1 ? 's' : ''} as source`
-                : 'No documents uploaded — will generate from syllabus knowledge'}
+              {(() => {
+                const notes = docs.filter(d => d.docType === 'notes' || !d.docType)
+                const papers = docs.filter(d => d.docType === 'past-paper')
+                if (notes.length > 0) return `Using ${notes.length} study note${notes.length !== 1 ? 's' : ''} as source`
+                if (papers.length > 0) return `No study notes — using ${papers.length} past paper${papers.length !== 1 ? 's' : ''} as fallback`
+                return 'No documents — generating from syllabus knowledge'
+              })()}
             </div>
 
             {quizError && (
