@@ -1,15 +1,4 @@
-// Upstash Redis REST client — plain fetch, no SDK (same pattern as AUSOVRN Assist)
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN
-
-async function redis(command, ...args) {
-  const res = await fetch(`${REDIS_URL}/${[command, ...args].map(encodeURIComponent).join('/')}`, {
-    headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
-  })
-  if (!res.ok) throw new Error(`Redis error: ${res.status}`)
-  const data = await res.json()
-  return data.result
-}
+// Upstash Redis REST client — plain fetch, no SDK
 
 export async function redisGet(key) {
   const val = await redis('GET', key)
@@ -19,7 +8,7 @@ export async function redisGet(key) {
 
 export async function redisSet(key, value, exSeconds = null) {
   const str = JSON.stringify(value)
-  if (exSeconds) return redis('SET', key, str, 'EX', exSeconds)
+  if (exSeconds) return redis('SET', key, str, 'EX', String(exSeconds))
   return redis('SET', key, str)
 }
 
@@ -29,4 +18,22 @@ export async function redisDel(key) {
 
 export async function redisKeys(pattern) {
   return redis('KEYS', pattern)
+}
+
+async function redis(command, ...args) {
+  const url = process.env.UPSTASH_REDIS_REST_URL
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+
+  if (!url || !token) throw new Error('Redis env vars missing')
+
+  const parts = [command, ...args].map(a => encodeURIComponent(String(a)))
+  const res = await fetch(`${url}/${parts.join('/')}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Redis ${command} failed: ${res.status} ${text}`)
+  }
+  const data = await res.json()
+  return data.result
 }
