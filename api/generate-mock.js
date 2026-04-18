@@ -30,11 +30,11 @@ const EXAM_PRESETS = {
   UCAT: {
     name: 'UCAT', fullName: 'University Clinical Aptitude Test',
     sections: [
-      { name: 'Verbal Reasoning', type: 'mcq', marks: 44, instructions: '21 minutes. Read passages and answer questions.', questionCount: 4 },
-      { name: 'Decision Making', type: 'mcq', marks: 29, instructions: '31 minutes. Logical reasoning.', questionCount: 3 },
-      { name: 'Quantitative Reasoning', type: 'mcq', marks: 36, instructions: '25 minutes. Numerical interpretation.', questionCount: 4 },
-      { name: 'Abstract Reasoning', type: 'mcq', marks: 50, instructions: '12 minutes. Pattern recognition.', questionCount: 3 },
-      { name: 'Situational Judgement', type: 'mcq', marks: 69, instructions: '26 minutes. Rate appropriateness of responses.', questionCount: 3 }
+      { name: 'Verbal Reasoning', type: 'mcq', marks: 44, instructions: '21 minutes. Read passages and answer questions.', questionCount: 2 },
+      { name: 'Decision Making', type: 'mcq', marks: 29, instructions: '31 minutes. Logical reasoning.', questionCount: 2 },
+      { name: 'Quantitative Reasoning', type: 'mcq', marks: 36, instructions: '25 minutes. Numerical interpretation.', questionCount: 2 },
+      { name: 'Abstract Reasoning', type: 'mcq', marks: 50, instructions: '12 minutes. Pattern recognition.', questionCount: 2 },
+      { name: 'Situational Judgement', type: 'mcq', marks: 69, instructions: '26 minutes. Rate appropriateness of responses.', questionCount: 2 }
     ],
     totalMarks: 3600, timeLimitMins: 115,
     style: 'UCAT AU/NZ. Aptitude not knowledge. Clinical scenarios for SJT. VR uses dense passages.'
@@ -42,9 +42,9 @@ const EXAM_PRESETS = {
   GAMSAT: {
     name: 'GAMSAT', fullName: 'Graduate Medical School Admissions Test',
     sections: [
-      { name: 'Section I — Humanities & Social Sciences', type: 'mcq', marks: 75, instructions: 'Interpret texts, poems, cartoons.', questionCount: 6 },
+      { name: 'Section I — Humanities & Social Sciences', type: 'mcq', marks: 75, instructions: 'Interpret texts, poems, cartoons.', questionCount: 2 },
       { name: 'Section II — Written Communication', type: 'extended', marks: 2, instructions: 'Two essays: personal/social and argumentative.', questionCount: 2 },
-      { name: 'Section III — Biological & Physical Sciences', type: 'mcq', marks: 110, instructions: 'Biology 40%, Chemistry 40%, Physics 20%.', questionCount: 6 }
+      { name: 'Section III — Biological & Physical Sciences', type: 'mcq', marks: 110, instructions: 'Biology 40%, Chemistry 40%, Physics 20%.', questionCount: 2 }
     ],
     totalMarks: 100, timeLimitMins: 348,
     style: 'GAMSAT AU. Graduate-level difficulty. Section III requires deep science reasoning.'
@@ -52,7 +52,7 @@ const EXAM_PRESETS = {
   IELTS: {
     name: 'IELTS Academic', fullName: 'International English Language Testing System',
     sections: [
-      { name: 'Reading', type: 'short', marks: 40, instructions: 'Three passages. MCQ, matching, completion.', questionCount: 6 },
+      { name: 'Reading', type: 'short', marks: 40, instructions: 'Three passages. MCQ, matching, completion.', questionCount: 2 },
       { name: 'Writing Task 1', type: 'extended', marks: 9, instructions: 'Describe a graph or chart in 150+ words.', questionCount: 1 },
       { name: 'Writing Task 2', type: 'extended', marks: 9, instructions: 'Argumentative essay 250+ words.', questionCount: 1 }
     ],
@@ -62,9 +62,9 @@ const EXAM_PRESETS = {
   SELECTIVE: {
     name: 'Selective School', fullName: 'NSW Selective School Entry Test',
     sections: [
-      { name: 'Reading', type: 'mcq', marks: 30, instructions: 'Comprehension questions.', questionCount: 5 },
-      { name: 'Mathematical Reasoning', type: 'mcq', marks: 35, instructions: 'Problem solving questions.', questionCount: 5 },
-      { name: 'Thinking Skills', type: 'mcq', marks: 40, instructions: 'Abstract reasoning questions.', questionCount: 5 },
+      { name: 'Reading', type: 'mcq', marks: 30, instructions: 'Comprehension questions.', questionCount: 2 },
+      { name: 'Mathematical Reasoning', type: 'mcq', marks: 35, instructions: 'Problem solving questions.', questionCount: 2 },
+      { name: 'Thinking Skills', type: 'mcq', marks: 40, instructions: 'Abstract reasoning questions.', questionCount: 2 },
       { name: 'Writing', type: 'extended', marks: 30, instructions: 'Creative or persuasive prompt.', questionCount: 1 }
     ],
     totalMarks: 135, timeLimitMins: 175,
@@ -73,7 +73,7 @@ const EXAM_PRESETS = {
   AMC: {
     name: 'AMC MCQ', fullName: 'Australian Medical Council MCQ Examination',
     sections: [
-      { name: 'Clinical Medicine', type: 'mcq', marks: 150, instructions: 'Single best answer clinical vignettes.', questionCount: 10 }
+      { name: 'Clinical Medicine', type: 'mcq', marks: 150, instructions: 'Single best answer clinical vignettes.', questionCount: 4 }
     ],
     totalMarks: 150, timeLimitMins: 210,
     style: 'AMC MCQ. Clinical vignette format. All specialties. Evidence-based.'
@@ -81,9 +81,9 @@ const EXAM_PRESETS = {
   OC: {
     name: 'OC Test', fullName: 'Opportunity Class Placement Test',
     sections: [
-      { name: 'Reading', type: 'mcq', marks: 30, instructions: 'Comprehension on varied texts.', questionCount: 5 },
-      { name: 'Mathematical Reasoning', type: 'mcq', marks: 35, instructions: 'Numeracy for Year 4-5 level.', questionCount: 5 },
-      { name: 'Thinking Skills', type: 'mcq', marks: 30, instructions: 'Logical and abstract reasoning.', questionCount: 5 }
+      { name: 'Reading', type: 'mcq', marks: 30, instructions: 'Comprehension on varied texts.', questionCount: 2 },
+      { name: 'Mathematical Reasoning', type: 'mcq', marks: 35, instructions: 'Numeracy for Year 4-5 level.', questionCount: 2 },
+      { name: 'Thinking Skills', type: 'mcq', marks: 30, instructions: 'Logical and abstract reasoning.', questionCount: 2 }
     ],
     totalMarks: 95, timeLimitMins: 120,
     style: 'NSW OC. Year 4 level (9-10 year olds). Simple language. Australian contexts.'
@@ -150,7 +150,7 @@ async function generatePaper(userId, subject, options) {
     prompt = `Create Mock Paper ${paperNumber} for ${p.name} (${p.fullName}).
 Style: ${p.style}
 ${memorySection ? `Memory: ${memorySection}` : ''}
-${docContext ? `Student material:\n${docContext.slice(0, 2000)}` : ''}
+${docContext ? `Student material:\n${docContext.slice(0, 1200)}` : ''}
 ${customInstructions ? `Focus: ${customInstructions}` : ''}
 
 Sections:
@@ -166,7 +166,7 @@ Return ONLY valid JSON:`
 
     prompt = `Create Mock Paper ${paperNumber} for ${examBoard} ${name}, Year ${yearLevel}, ${state}.
 ${memorySection ? `Memory: ${memorySection}` : ''}
-${docContext ? `Use this material:\n${docContext.slice(0, 2000)}` : ''}
+${docContext ? `Use this material:\n${docContext.slice(0, 1200)}` : ''}
 ${customInstructions ? `Focus: ${customInstructions}` : ''}
 Topics: ${topicsList}
 Sections: ${sections.join(', ')} — ${marksPerSection} marks each
@@ -197,7 +197,7 @@ Return ONLY valid JSON — 3-4 questions per section, match real ${examBoard} st
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 3000,
+      max_tokens: 2500,
       messages: [
         { role: 'user', content: fullPrompt },
         { role: 'assistant', content: '{' }

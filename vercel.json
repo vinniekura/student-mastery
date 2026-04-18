@@ -6,6 +6,9 @@
     }
   ],
   "functions": {
+    "api/generate-mock.js": {
+      "maxDuration": 300
+    },
     "api/*.js": {
       "maxDuration": 60
     }
