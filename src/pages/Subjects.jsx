@@ -51,7 +51,7 @@ export default function Subjects() {
       ) : (
         <div style={{ display: 'grid', gap: 10 }}>
           {subjects.map(s => (
-            <Link key={s.id} to={`/subjects/${s.id}/edit`} style={{ textDecoration: 'none' }}>
+            <Link key={s.id} to={`/subjects/${s.id}`} style={{ textDecoration: 'none' }}>
               <div style={{
                 background: 'var(--bg2)', border: '1px solid var(--border)',
                 borderRadius: 'var(--radius-lg)', padding: '16px 20px',
