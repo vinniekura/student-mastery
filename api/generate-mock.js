@@ -23,6 +23,13 @@ function extractJson(text) {
   if (start !== -1 && end !== -1 && end > start) {
     try { return JSON.parse(text.slice(start, end + 1)) } catch {}
   }
+  // Try fixing trailing commas
+  if (start !== -1 && end !== -1) {
+    try {
+      const fixed = text.slice(start, end + 1).replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')
+      return JSON.parse(fixed)
+    } catch {}
+  }
   throw new Error('Could not extract JSON from response')
 }
 
@@ -134,7 +141,7 @@ export default async function handler(req, res) {
     const allTopics = topics.map(t => t.name)
     const unusedTopics = allTopics.filter(t => !usedTopics.includes(t))
     const memorySection = usedTopics.length > 0
-      ? `AVOID: ${usedTopics.join(', ')}. PRIORITISE: ${unusedTopics.length > 0 ? unusedTopics.join(', ') : 'fresh angles'}. Skip: ${usedQuestions.slice(0, 2).join(' | ')}`
+      ? `AVOID repeating: ${usedTopics.join(', ')}. Focus on: ${unusedTopics.length > 0 ? unusedTopics.join(', ') : 'fresh scenarios'}.`
       : ''
 
     // Get docs — prefer past-paper type
