@@ -1,5 +1,5 @@
-import { redisGet, redisSet } from '../src/lib/redis.js'
-import { requireAuth, unauthorizedResponse } from '../src/lib/clerk.js'
+import { redisGet, redisSet } from './lib/redis.js'
+import { requireAuth, unauthorizedResponse } from './lib/clerk.js'
 
 export default async function handler(req) {
   let userId
