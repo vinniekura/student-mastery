@@ -210,7 +210,7 @@ Return ONLY valid JSON:
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 2500,
+        max_tokens: 4000,
         messages: [
           { role: 'user', content: prompt },
           { role: 'assistant', content: '{' }
@@ -226,9 +226,7 @@ Return ONLY valid JSON:
 
     const claudeData = await claudeRes.json()
     const raw = '{' + (claudeData.content?.[0]?.text || '{}')
-    console.error('RAW RESPONSE (first 800):', raw.slice(0, 800))
-    console.error('RAW RESPONSE (last 200):', raw.slice(-200))
-    const paper = extractJson(raw)
+const paper = extractJson(raw)
 
     if (!paper.sections || !Array.isArray(paper.sections)) {
       throw new Error('Invalid paper structure — please try again')
