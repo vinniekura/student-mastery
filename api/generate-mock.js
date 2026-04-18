@@ -218,11 +218,16 @@ Return ONLY valid JSON:
       })
     })
 
-    if (!claudeRes.ok) throw new Error(`Claude API error: ${claudeRes.status}`)
+    if (!claudeRes.ok) {
+      const errText = await claudeRes.text()
+      console.error('Claude API error:', claudeRes.status, errText.slice(0, 300))
+      throw new Error(`Claude API error: ${claudeRes.status} ${errText.slice(0, 100)}`)
+    }
 
     const claudeData = await claudeRes.json()
     const raw = '{' + (claudeData.content?.[0]?.text || '{}')
-    console.error('RAW RESPONSE:', raw.slice(0, 500))
+    console.error('RAW RESPONSE (first 800):', raw.slice(0, 800))
+    console.error('RAW RESPONSE (last 200):', raw.slice(-200))
     const paper = extractJson(raw)
 
     if (!paper.sections || !Array.isArray(paper.sections)) {
