@@ -156,7 +156,7 @@ export default async function handler(req, res) {
       let charCount = 0
       const selected = []
       for (const chunk of allChunks) {
-        if (charCount + chunk.length > 1500) break
+        if (charCount + chunk.length > 500) break
         selected.push(chunk)
         charCount += chunk.length
       }
@@ -195,7 +195,7 @@ ${docContext ? `Use this material:\n${docContext}` : ''}
 ${customInstructions ? `Focus: ${customInstructions}` : ''}
 Topics: ${topicsList}
 Sections: ${sections.join(', ')} — ${marksPerSection} marks each. Total: ${totalMarks} marks, ${timeLimitMins} min.
-Generate 2-3 questions per section. Match real ${examBoard} style exactly.
+Generate EXACTLY 2 SHORT questions per section. Questions max 1 sentence. Options max 8 words each. markingCriteria max 15 words.
 Return ONLY valid JSON:
 {"title":"${name} Mock Paper ${paperNumber}","examBoard":"${examBoard}","subject":"${name}","yearLevel":"${yearLevel}","totalMarks":${totalMarks},"timeAllowed":"${timeLimitMins} minutes","instructions":"Answer ALL questions. Show all working.","sections":[{"name":"...","type":"mcq","marks":${marksPerSection},"instructions":"...","questions":[{"number":1,"question":"...","marks":2,"type":"mcq","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"B","markingCriteria":"...","topic":"..."}]}]}`
     }
@@ -209,8 +209,8 @@ Return ONLY valid JSON:
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 4000,
+        model: 'claude-sonnet-4-5-20251001',
+        max_tokens: 8000,
         messages: [
           { role: 'user', content: prompt },
           { role: 'assistant', content: '{' }
@@ -225,7 +225,6 @@ Return ONLY valid JSON:
     }
 
     const claudeData = await claudeRes.json()
-    console.error('RAW:', (claudeData.content?.[0]?.text || '').slice(0, 200))
     const raw = '{' + (claudeData.content?.[0]?.text || '{}')
     const paper = extractJson(raw)
 
