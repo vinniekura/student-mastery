@@ -225,8 +225,9 @@ Return ONLY valid JSON:
     }
 
     const claudeData = await claudeRes.json()
+    console.error('RAW:', (claudeData.content?.[0]?.text || '').slice(0, 200))
     const raw = '{' + (claudeData.content?.[0]?.text || '{}')
-const paper = extractJson(raw)
+    const paper = extractJson(raw)
 
     if (!paper.sections || !Array.isArray(paper.sections)) {
       throw new Error('Invalid paper structure — please try again')
