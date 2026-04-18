@@ -14,32 +14,26 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 }
 
-// Web scout — search for past papers via Claude's web search tool
-async function webScout(subject) {
-  const query = `${subject.examBoard} ${subject.name} Year ${subject.yearLevel} past exam questions sample paper`
+// Extract JSON from Claude response robustly
+function extractJson(text) {
+  // Try direct parse first
+  try { return JSON.parse(text.trim()) } catch {}
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
-      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-      messages: [{
-        role: 'user',
-        content: `Search for ${query}. Find 3-5 example exam questions for ${subject.name} (${subject.examBoard}, Year ${subject.yearLevel}). Return a brief summary of question styles and 2-3 actual example questions you find.`
-      }]
-    })
-  })
+  // Strip markdown code blocks
+  const stripped = text
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/gi, '')
+    .trim()
+  try { return JSON.parse(stripped) } catch {}
 
-  if (!res.ok) return null
-  const data = await res.json()
-  const text = data.content?.filter(b => b.type === 'text').map(b => b.text).join('\n')
-  return text || null
+  // Find first { ... } block
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start !== -1 && end !== -1 && end > start) {
+    try { return JSON.parse(text.slice(start, end + 1)) } catch {}
+  }
+
+  throw new Error('Could not extract JSON from response')
 }
 
 export default async function handler(req, res) {
@@ -50,12 +44,7 @@ export default async function handler(req, res) {
   catch (e) { res.status(401).json({ error: 'Unauthorized' }); return }
 
   try {
-    const {
-      subjectId,
-      includeWebScout = true,
-      customInstructions = ''
-    } = await parseBody(req)
-
+    const { subjectId, customInstructions = '' } = await parseBody(req)
     if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
 
     // Get subject
@@ -70,107 +59,76 @@ export default async function handler(req, res) {
       timeLimitMins = 180
     } = paperFormat
 
-    // Get ingested docs for context
+    // Get ingested docs
     const docs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
     let docContext = ''
+    let sourceType = 'syllabus'
+
     if (docs.length > 0) {
       const allChunks = docs.flatMap(d => d.chunks || [])
       let charCount = 0
       const selected = []
       for (const chunk of allChunks) {
-        if (charCount + chunk.length > 8000) break
+        if (charCount + chunk.length > 6000) break
         selected.push(chunk)
         charCount += chunk.length
       }
-      docContext = selected.join('\n\n')
-    }
-
-    // Web scout fallback if no useful docs
-    let scoutContext = ''
-    let sourceType = 'syllabus'
-
-    if (docContext.length > 200) {
-      sourceType = 'docs'
-    } else if (includeWebScout) {
-      sourceType = 'scout'
-      try {
-        const scouted = await webScout(subject)
-        if (scouted) scoutContext = scouted
-      } catch (e) {
-        console.log('Web scout failed, continuing without:', e.message)
+      if (charCount > 100) {
+        docContext = selected.join('\n\n')
+        sourceType = 'docs'
       }
     }
-
-    const contextSection = docContext
-      ? `\n\nUSE THE FOLLOWING STUDY MATERIAL AS YOUR PRIMARY SOURCE:\n---\n${docContext}\n---\n`
-      : scoutContext
-      ? `\n\nUSE THE FOLLOWING REFERENCE MATERIAL TO INFORM QUESTION STYLE:\n---\n${scoutContext}\n---\n`
-      : ''
 
     const topicsList = topics.length > 0
       ? topics.map(t => t.name).join(', ')
       : `General ${name} content`
 
-    const sectionsDesc = sections.map((s, i) => {
-      const marksPerSection = Math.round(totalMarks / sections.length)
-      return `Section ${i + 1}: ${s} (${marksPerSection} marks)`
-    }).join('\n')
+    const marksPerSection = Math.floor(totalMarks / sections.length)
 
-    const prompt = `You are an expert ${examBoard} exam paper writer for ${name}, Year ${yearLevel}, ${state}, Australia.
+    const prompt = `You are an expert ${examBoard} exam writer for ${name}, Year ${yearLevel}, ${state}.
 
-Create a complete, realistic mock exam paper that closely matches the style, difficulty, and format of actual ${examBoard} exams.
-${contextSection}
-EXAM SPECIFICATIONS:
-- Subject: ${name}
-- Exam board: ${examBoard}
-- Year level: ${yearLevel}
-- State: ${state}
-- Total marks: ${totalMarks}
-- Time allowed: ${timeLimitMins} minutes
-- Topics to cover: ${topicsList}
-- Sections: 
-${sectionsDesc}
-${customInstructions ? `\nAdditional instructions: ${customInstructions}\n` : ''}
+Create a realistic mock exam paper. Return ONLY valid JSON, no other text.
+${docContext ? `\nBase questions on this study material:\n---\n${docContext.slice(0, 4000)}\n---\n` : ''}
+${customInstructions ? `\nExtra instructions: ${customInstructions}\n` : ''}
 
-CRITICAL REQUIREMENTS:
-1. Match the EXACT question style of real ${examBoard} ${name} papers
-2. Use appropriate difficulty for Year ${yearLevel} ${state} students
-3. Include realistic mark allocations per question
-4. For extended response, include the marking criteria
-5. Questions must be specific, detailed and exam-ready — not generic
-
-Return a JSON object with this EXACT structure (no markdown, no explanation outside JSON):
+Return this exact JSON structure:
 {
-  "title": "${name} — Mock Exam",
+  "title": "${name} Mock Exam",
   "examBoard": "${examBoard}",
   "subject": "${name}",
   "yearLevel": "${yearLevel}",
   "totalMarks": ${totalMarks},
   "timeAllowed": "${timeLimitMins} minutes",
-  "instructions": "Answer ALL questions. Write your answers in the spaces provided.",
+  "instructions": "Answer ALL questions. Write answers in spaces provided.",
   "sections": [
     {
-      "name": "Section name",
-      "type": "mcq|short|extended",
-      "marks": 30,
-      "instructions": "Section-specific instructions",
+      "name": "${sections[0] || 'Section A'}",
+      "type": "mcq",
+      "marks": ${marksPerSection},
+      "instructions": "Circle the correct answer.",
       "questions": [
         {
           "number": 1,
-          "question": "Full question text",
+          "question": "Question text here",
           "marks": 2,
-          "type": "mcq|short|extended",
-          "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+          "type": "mcq",
+          "options": ["A. Option 1", "B. Option 2", "C. Option 3", "D. Option 4"],
           "answer": "B",
-          "markingCriteria": "Award 1 mark for... Award 2 marks for...",
-          "topic": "Topic name"
+          "markingCriteria": "Award 2 marks for correct answer.",
+          "topic": "${topicsList.split(',')[0]?.trim() || name}"
         }
       ]
     }
   ]
-}`
+}
 
-    // Generate with Claude
+Rules:
+- Generate ${sections.length} sections matching: ${sections.join(', ')}
+- Each section needs 3-5 questions appropriate to its type
+- Topics to cover: ${topicsList}
+- Match real ${examBoard} exam style and difficulty for Year ${yearLevel}
+- Return ONLY the JSON object, nothing else`
+
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -180,25 +138,40 @@ Return a JSON object with this EXACT structure (no markdown, no explanation outs
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }]
+        max_tokens: 4096,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          },
+          {
+            role: 'assistant',
+            content: '{'  // Prime Claude to start with JSON
+          }
+        ]
       })
     })
 
     if (!claudeRes.ok) {
       const err = await claudeRes.text()
-      throw new Error(`Claude API error: ${claudeRes.status} ${err}`)
+      throw new Error(`Claude API error: ${claudeRes.status}`)
     }
 
     const claudeData = await claudeRes.json()
-    const raw = claudeData.content?.[0]?.text || '{}'
+    // The response continues from our '{'  primer
+    const raw = '{' + (claudeData.content?.[0]?.text || '{}')
 
     let paper
     try {
-      const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-      paper = JSON.parse(clean)
+      paper = extractJson(raw)
     } catch {
-      throw new Error('Failed to parse paper from Claude response')
+      // Last resort — build a basic paper structure
+      throw new Error('Paper generation failed — please try again')
+    }
+
+    // Ensure required fields
+    if (!paper.sections || !Array.isArray(paper.sections)) {
+      throw new Error('Invalid paper structure returned')
     }
 
     // Save to Redis
@@ -215,14 +188,13 @@ Return a JSON object with this EXACT structure (no markdown, no explanation outs
     const paperKey = `sm:papers:${userId}`
     const existing = await redisGet(paperKey) || []
     existing.unshift(paperRecord)
-    await redisSet(paperKey, existing.slice(0, 20)) // keep last 20
+    await redisSet(paperKey, existing.slice(0, 20))
 
     res.status(200).json({
       ok: true,
       paperId: paperRecord.id,
       paper,
-      sourceType,
-      docCount: docs.length
+      sourceType
     })
 
   } catch (e) {
