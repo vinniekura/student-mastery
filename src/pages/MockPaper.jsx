@@ -35,11 +35,20 @@ export default function MockPaper() {
     if (selectedSubjectId) loadSubjectPapers()
   }, [selectedSubjectId])
 
-  // Poll if any paper is generating
+  // Poll if any paper is generating — with 2-minute timeout
   useEffect(() => {
-    const hasGenerating = subjectPapers.some(p => p.status === 'generating')
+    const generatingPapers = subjectPapers.filter(p => p.status === 'generating')
     clearInterval(pollRef.current)
-    if (hasGenerating) {
+    if (generatingPapers.length > 0) {
+      // Auto-mark as failed if generating for more than 2 minutes
+      const now = Date.now()
+      generatingPapers.forEach(p => {
+        const age = now - new Date(p.generatedAt).getTime()
+        if (age > 120000) {
+          cancelGenerating(p.id)
+        }
+      })
+
       pollRef.current = setInterval(async () => {
         const token = await getToken()
         const res = await fetch(`/api/papers?subjectId=${selectedSubjectId}`, {
@@ -107,6 +116,16 @@ export default function MockPaper() {
       })
       await loadSubjectPapers()
     } finally { setDeletingId(null) }
+  }
+
+  async function cancelGenerating(paperId) {
+    try {
+      const token = await getToken()
+      await fetch(`/api/cancel-mock?subjectId=${selectedSubjectId}&paperId=${paperId}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }
+      })
+      await loadSubjectPapers()
+    } catch (e) { console.error('cancel error:', e) }
   }
 
   function toggleAnswer(sIdx, qIdx) {
@@ -260,10 +279,14 @@ export default function MockPaper() {
                     )}
 
                     {isGenerating && (
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                         <div style={{ width: 24, height: 24, border: '2px solid var(--teal-border)', borderTopColor: 'var(--teal2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />
                         <div style={{ fontSize: 11, color: 'var(--teal2)', textAlign: 'center', animation: 'pulse 1.5s infinite' }}>Generating...</div>
                         <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center' }}>Usually 20-40s</div>
+                        <button
+                          onClick={() => cancelGenerating(paper.id)}
+                          style={{ fontSize: 10, padding: '3px 10px', borderRadius: 6, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text3)', cursor: 'pointer', marginTop: 4 }}
+                        >Cancel</button>
                       </div>
                     )}
 
