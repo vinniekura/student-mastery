@@ -222,6 +222,7 @@ Return ONLY valid JSON:
 
     const claudeData = await claudeRes.json()
     const raw = '{' + (claudeData.content?.[0]?.text || '{}')
+    console.error('RAW RESPONSE:', raw.slice(0, 500))
     const paper = extractJson(raw)
 
     if (!paper.sections || !Array.isArray(paper.sections)) {
