@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx'
 import Subjects from './pages/Subjects.jsx'
 import SubjectSetup from './pages/SubjectSetup.jsx'
 import SubjectHub from './pages/SubjectHub.jsx'
+import MockPaper from './pages/MockPaper.jsx'
 import Calendar from './pages/Calendar.jsx'
 import Settings from './pages/Settings.jsx'
 import Layout from './components/Layout.jsx'
@@ -19,19 +20,13 @@ function ProtectedRoute({ children }) {
 function LoadingScreen() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-      <div style={{ textAlign: 'center', color: 'var(--text2)' }}>
-        <div style={{ fontSize: 13 }}>Loading Student Mastery...</div>
-      </div>
+      <div style={{ fontSize: 13, color: 'var(--text2)' }}>Loading Student Mastery...</div>
     </div>
   )
 }
 
 function P({ children }) {
-  return (
-    <ProtectedRoute>
-      <Layout>{children}</Layout>
-    </ProtectedRoute>
-  )
+  return <ProtectedRoute><Layout>{children}</Layout></ProtectedRoute>
 }
 
 export default function App() {
@@ -44,6 +39,7 @@ export default function App() {
         <Route path="/subjects/new" element={<P><SubjectSetup /></P>} />
         <Route path="/subjects/:subjectId" element={<P><SubjectHub /></P>} />
         <Route path="/subjects/:subjectId/edit" element={<P><SubjectSetup /></P>} />
+        <Route path="/mock-paper" element={<P><MockPaper /></P>} />
         <Route path="/calendar" element={<P><Calendar /></P>} />
         <Route path="/settings" element={<P><Settings /></P>} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
