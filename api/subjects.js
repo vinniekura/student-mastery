@@ -1,13 +1,18 @@
-import { redisGet, redisSet } from '../src/lib/redis.js'
-import { requireAuth, unauthorizedResponse } from '../src/lib/clerk.js'
+import { redisGet, redisSet } from './lib/redis.js'
+import { requireAuth, unauthorizedResponse } from './lib/clerk.js'
 
 export default async function handler(req) {
   let userId
   try { userId = await requireAuth(req) }
-  catch { return unauthorizedResponse() }
+  catch (e) { return unauthorizedResponse() }
 
   const key = `sm:subjects:${userId}`
-  const url = new URL(req.url)
+
+  // Parse query string safely — req.url may be relative
+  const rawUrl = req.url || ''
+  const qIndex = rawUrl.indexOf('?')
+  const queryString = qIndex >= 0 ? rawUrl.slice(qIndex + 1) : ''
+  const params = new URLSearchParams(queryString)
 
   if (req.method === 'GET') {
     const subjects = await redisGet(key) || []
@@ -29,7 +34,7 @@ export default async function handler(req) {
   }
 
   if (req.method === 'DELETE') {
-    const id = url.searchParams.get('id')
+    const id = params.get('id')
     if (!id) return Response.json({ error: 'id required' }, { status: 400 })
     const subjects = await redisGet(key) || []
     await redisSet(key, subjects.filter(s => s.id !== id))
