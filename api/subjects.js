@@ -8,29 +8,42 @@ function json(data, status = 200) {
   })
 }
 
-export default async function handler(req) {
+async function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', chunk => { body += chunk.toString() })
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)) }
+      catch (e) { resolve({}) }
+    })
+    req.on('error', reject)
+  })
+}
+
+export default async function handler(req, res) {
   let userId
-  try {
-    userId = await requireAuth(req)
-  } catch (e) {
+  try { userId = await requireAuth(req) }
+  catch (e) {
     console.error('Auth error:', e.message)
-    return unauthorizedResponse()
+    res.status(401).json({ error: 'Unauthorized' })
+    return
   }
 
   const key = `sm:subjects:${userId}`
-  const rawUrl = req.url || ''
-  const qIndex = rawUrl.indexOf('?')
-  const params = new URLSearchParams(qIndex >= 0 ? rawUrl.slice(qIndex + 1) : '')
+  const { url = '', method } = req
+  const qIndex = url.indexOf('?')
+  const params = new URLSearchParams(qIndex >= 0 ? url.slice(qIndex + 1) : '')
 
   try {
-    if (req.method === 'GET') {
+    if (method === 'GET') {
       const subjects = await redisGet(key) || []
-      return json({ subjects })
+      res.status(200).json({ subjects })
+      return
     }
 
-    if (req.method === 'POST') {
-      const subject = await req.json()
-      if (!subject?.id) return json({ error: 'Subject id required' }, 400)
+    if (method === 'POST') {
+      const subject = await parseBody(req)
+      if (!subject?.id) { res.status(400).json({ error: 'Subject id required' }); return }
       const subjects = await redisGet(key) || []
       const idx = subjects.findIndex(s => s.id === subject.id)
       if (idx >= 0) {
@@ -39,21 +52,23 @@ export default async function handler(req) {
         subjects.push({ ...subject, createdAt: new Date().toISOString() })
       }
       await redisSet(key, subjects)
-      return json({ subject: idx >= 0 ? subjects[idx] : subjects[subjects.length - 1] })
+      res.status(200).json({ subject: idx >= 0 ? subjects[idx] : subjects[subjects.length - 1] })
+      return
     }
 
-    if (req.method === 'DELETE') {
+    if (method === 'DELETE') {
       const id = params.get('id')
-      if (!id) return json({ error: 'id required' }, 400)
+      if (!id) { res.status(400).json({ error: 'id required' }); return }
       const subjects = await redisGet(key) || []
       await redisSet(key, subjects.filter(s => s.id !== id))
-      return json({ ok: true })
+      res.status(200).json({ ok: true })
+      return
     }
 
-    return json({ error: 'Method not allowed' }, 405)
+    res.status(405).json({ error: 'Method not allowed' })
 
   } catch (e) {
-    console.error('subjects error:', e.message, e.stack)
-    return json({ error: e.message }, 500)
+    console.error('subjects error:', e.message)
+    res.status(500).json({ error: e.message })
   }
 }

@@ -1,25 +1,43 @@
 import { redisGet, redisSet } from './lib/redis.js'
-import { requireAuth, unauthorizedResponse } from './lib/clerk.js'
+import { requireAuth } from './lib/clerk.js'
 
-export default async function handler(req) {
+async function parseBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', chunk => { body += chunk.toString() })
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)) } catch { resolve({}) }
+    })
+    req.on('error', reject)
+  })
+}
+
+export default async function handler(req, res) {
   let userId
   try { userId = await requireAuth(req) }
-  catch { return unauthorizedResponse() }
+  catch (e) { res.status(401).json({ error: 'Unauthorized' }); return }
 
   const key = `sm:profile:${userId}`
 
-  if (req.method === 'GET') {
-    const profile = await redisGet(key) || {}
-    return Response.json({ profile })
-  }
+  try {
+    if (req.method === 'GET') {
+      const profile = await redisGet(key) || {}
+      res.status(200).json({ profile })
+      return
+    }
 
-  if (req.method === 'POST') {
-    const incoming = await req.json()
-    const existing = await redisGet(key) || {}
-    const profile = { ...existing, ...incoming, updatedAt: new Date().toISOString() }
-    await redisSet(key, profile)
-    return Response.json({ profile })
-  }
+    if (req.method === 'POST') {
+      const incoming = await parseBody(req)
+      const existing = await redisGet(key) || {}
+      const profile = { ...existing, ...incoming, updatedAt: new Date().toISOString() }
+      await redisSet(key, profile)
+      res.status(200).json({ profile })
+      return
+    }
 
-  return Response.json({ error: 'Method not allowed' }, { status: 405 })
+    res.status(405).json({ error: 'Method not allowed' })
+  } catch (e) {
+    console.error('profile error:', e.message)
+    res.status(500).json({ error: e.message })
+  }
 }
