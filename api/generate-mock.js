@@ -112,9 +112,12 @@ export default async function handler(req, res) {
     const subject = subjects.find(s => s.id === subjectId)
     if (!subject) { res.status(404).json({ error: 'Subject not found' }); return }
 
-    const { name, state, examBoard, yearLevel, topics = [], paperFormat = {} } = subject
+    const { name, state, examBoard, yearLevel, topics = [], paperFormat = {}, extractedFormat } = subject
     const preset = EXAM_PRESETS[examBoard?.toUpperCase()] || EXAM_PRESETS[name?.toUpperCase()]
     const isCompetitive = !!preset
+
+    // Use extracted format from real past papers if available
+    const useExtractedFormat = !!extractedFormat && !isCompetitive
 
     const { totalMarks = preset?.totalMarks || 100, timeLimitMins = preset?.timeLimitMins || 180 } = paperFormat
 
@@ -189,13 +192,24 @@ Return ONLY valid JSON with this structure:
         ? paperFormat.sections
         : ['Multiple choice', 'Short answer', 'Extended response']
       const marksPerSection = Math.floor(totalMarks / sections.length)
-      prompt = `Create Mock Paper ${paperNumber} for ${examBoard} ${name}, Year ${yearLevel}, ${state}.
+      const formatInstructions = useExtractedFormat ? `
+EXACT EXAM FORMAT (extracted from real past paper — follow this precisely):
+- Total marks: ${extractedFormat.totalMarks}
+- Time: ${extractedFormat.timeAllowed}
+- Formula sheet: ${extractedFormat.formulaSheet ? 'YES' : 'NO'}
+- Allowed materials: ${extractedFormat.allowedMaterials || 'Standard'}
+- Question style: ${extractedFormat.questionStyle || 'Match past paper'}
+SECTIONS:
+${(extractedFormat.sections || []).map((s, i) => `Section ${i+1}: ${s.name} — ${s.questionCount} questions, ${s.marks} marks. ${s.instructions}. ${s.hasDiagrams ? 'Include diagram descriptions.' : ''}`).join('\n')}
+` : `Sections: ${sections.join(', ')} — ${marksPerSection} marks each. Total: ${totalMarks} marks, ${timeLimitMins} min.`
+
+    prompt = `Create Mock Paper ${paperNumber} for ${examBoard} ${name}, Year ${yearLevel}, ${state}.
 ${memorySection ? `Memory: ${memorySection}` : ''}
-${docContext ? `Use this material:\n${docContext}` : ''}
+${docContext ? `Reference material:\n${docContext}` : ''}
 ${customInstructions ? `Focus: ${customInstructions}` : ''}
 Topics: ${topicsList}
-Sections: ${sections.join(', ')} — ${marksPerSection} marks each. Total: ${totalMarks} marks, ${timeLimitMins} min.
-Generate EXACTLY 2 SHORT questions per section. Questions max 1 sentence. Options max 8 words each. markingCriteria max 15 words.
+${formatInstructions}
+Generate EXACTLY 2 questions per section. Keep questions concise and exam-appropriate.
 Return ONLY valid JSON:
 {"title":"${name} Mock Paper ${paperNumber}","examBoard":"${examBoard}","subject":"${name}","yearLevel":"${yearLevel}","totalMarks":${totalMarks},"timeAllowed":"${timeLimitMins} minutes","instructions":"Answer ALL questions. Show all working.","sections":[{"name":"...","type":"mcq","marks":${marksPerSection},"instructions":"...","questions":[{"number":1,"question":"...","marks":2,"type":"mcq","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"B","markingCriteria":"...","topic":"..."}]}]}`
     }

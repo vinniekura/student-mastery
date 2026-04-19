@@ -18,6 +18,8 @@ export default function SubjectHub() {
   const [quizConfig, setQuizConfig] = useState({ count: 5, type: 'mcq', topic: '' })
   const [quizError, setQuizError] = useState(null)
   const [deletingDoc, setDeletingDoc] = useState(null)
+  const [extractingFormat, setExtractingFormat] = useState(false)
+  const [formatExtracted, setFormatExtracted] = useState(!!subject?.extractedFormat)
 
   const subject = subjects.find(s => s.id === subjectId)
 
@@ -61,6 +63,24 @@ export default function SubjectHub() {
       if (res.ok) setDocs(d => d.filter(doc => doc.id !== docId))
     } finally {
       setDeletingDoc(null)
+    }
+  }
+
+  async function extractFormat() {
+    setExtractingFormat(true)
+    try {
+      const token = await getToken()
+      const res = await fetch(`/api/extract-format?subjectId=${subjectId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to extract format')
+      setFormatExtracted(true)
+    } catch (e) {
+      console.error('Format extraction error:', e.message)
+    } finally {
+      setExtractingFormat(false)
     }
   }
 
@@ -181,6 +201,28 @@ export default function SubjectHub() {
                 </div>
               )}
             </div>
+
+          {/* Extract format button — shows when past papers uploaded */}
+          {docs.filter(d => d.docType === 'past-paper').length > 0 && (
+            <div style={{ marginTop: 10, padding: '10px 12px', background: formatExtracted ? 'var(--teal-bg)' : 'var(--bg3)', borderRadius: 8, border: `1px solid ${formatExtracted ? 'var(--teal-border)' : 'var(--border)'}` }}>
+              {formatExtracted ? (
+                <div style={{ fontSize: 12, color: 'var(--teal2)' }}>
+                  ✓ Exam format extracted — mocks will mirror your past papers
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 6 }}>Analyse past paper format for better mocks</div>
+                  <button
+                    onClick={extractFormat}
+                    disabled={extractingFormat}
+                    style={{ fontSize: 12, padding: '6px 14px', borderRadius: 7, background: 'var(--teal)', border: 'none', color: '#fff', cursor: extractingFormat ? 'not-allowed' : 'pointer', opacity: extractingFormat ? 0.7 : 1 }}
+                  >
+                    {extractingFormat ? 'Analysing...' : 'Analyse format'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           </div>
         </div>
 

@@ -1,5 +1,6 @@
 import { redisGet, redisSet } from './lib/redis.js'
 import { requireAuth } from './lib/clerk.js'
+import { extractTextViaVision, extractPdfImages } from './ocr-doc.js'
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -115,8 +116,8 @@ export default async function handler(req, res) {
     if (!boundaryMatch) { res.status(400).json({ error: 'Expected multipart/form-data' }); return }
 
     const parts = splitMultipart(body, boundaryMatch[1])
-    let fileBuffer = null, filename = 'unknown', subjectId = null, fileType = 'pdf'
-    let docType = 'notes' // default
+    let fileBuffer = null, filename = 'unknown', subjectId = null
+    let fileType = 'pdf', docType = 'notes', mimeType = ''
 
     for (const part of parts) {
       const disposition = part.headers['content-disposition'] || ''
@@ -128,9 +129,13 @@ export default async function handler(req, res) {
         const nameMatch = disposition.match(/filename="([^"]+)"/)
         if (nameMatch) filename = nameMatch[1]
         fileBuffer = part.data
-        const ct = part.headers['content-type'] || ''
-        if (ct.includes('pdf') || filename.toLowerCase().endsWith('.pdf')) fileType = 'pdf'
-        else if (filename.toLowerCase().endsWith('.docx')) fileType = 'docx'
+        mimeType = part.headers['content-type'] || ''
+        const lower = filename.toLowerCase()
+        if (lower.endsWith('.pdf')) fileType = 'pdf'
+        else if (lower.endsWith('.docx')) fileType = 'docx'
+        else if (lower.match(/\.(jpg|jpeg)$/)) fileType = 'jpg'
+        else if (lower.endsWith('.png')) fileType = 'png'
+        else if (lower.endsWith('.txt')) fileType = 'txt'
         else fileType = 'txt'
       }
     }
@@ -138,12 +143,92 @@ export default async function handler(req, res) {
     if (!fileBuffer || !subjectId) { res.status(400).json({ error: 'Missing file or subjectId' }); return }
 
     let rawText = ''
-    if (fileType === 'pdf') rawText = extractPdfText(fileBuffer)
-    else if (fileType === 'docx') rawText = extractDocxText(fileBuffer)
-    else rawText = fileBuffer.toString('utf8')
+    let ocrUsed = false
 
-    if (!rawText || rawText.length < 50) {
-      res.status(400).json({ error: 'Could not extract text. Try a text-based PDF or DOCX.' })
+    if (fileType === 'jpg' || fileType === 'png') {
+      // Direct image — use vision OCR
+      const imageMime = fileType === 'png' ? 'image/png' : 'image/jpeg'
+      rawText = await extractTextViaVision(fileBuffer, imageMime)
+      ocrUsed = true
+    } else if (fileType === 'pdf') {
+      // Try text extraction first
+      rawText = extractPdfText(fileBuffer)
+      
+      // If minimal text extracted, it's likely scanned — try vision OCR on embedded images
+      if (rawText.length < 100) {
+        console.log('PDF has minimal text, trying vision OCR on embedded images...')
+        const images = extractPdfImages(fileBuffer)
+        
+        if (images.length > 0) {
+          // OCR up to 3 images (pages)
+          const ocrResults = []
+          for (const img of images.slice(0, 3)) {
+            try {
+              const text = await extractTextViaVision(img.data, img.mimeType)
+              if (text && text.length > 20) ocrResults.push(text)
+            } catch (e) {
+              console.error('Image OCR failed:', e.message)
+            }
+          }
+          if (ocrResults.length > 0) {
+            rawText = ocrResults.join('\n\n')
+            ocrUsed = true
+          }
+        }
+        
+        // If still no text, send whole PDF first page as context to Claude
+        if (rawText.length < 50) {
+          // Try sending raw PDF buffer as document to Claude
+          try {
+            const base64Pdf = fileBuffer.toString('base64')
+            const res2 = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01'
+              },
+              body: JSON.stringify({
+                model: 'claude-haiku-4-5-20251001',
+                max_tokens: 2000,
+                messages: [{
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'document',
+                      source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf }
+                    },
+                    {
+                      type: 'text',
+                      text: 'Extract all text content from this document. Output only the raw text, no commentary.'
+                    }
+                  ]
+                }]
+              })
+            })
+            if (res2.ok) {
+              const data2 = await res2.json()
+              const extracted = data2.content?.[0]?.text || ''
+              if (extracted.length > 50) {
+                rawText = extracted
+                ocrUsed = true
+              }
+            }
+          } catch (e) {
+            console.error('PDF document OCR failed:', e.message)
+          }
+        }
+      }
+    } else if (fileType === 'docx') {
+      rawText = extractDocxText(fileBuffer)
+    } else {
+      rawText = fileBuffer.toString('utf8')
+    }
+
+    if (!rawText || rawText.length < 30) {
+      res.status(400).json({ 
+        error: 'Could not extract text from this file. For handwritten notes, take a clear photo and upload as JPG/PNG. For scanned PDFs, ensure the scan is clear.'
+      })
       return
     }
 
@@ -152,7 +237,8 @@ export default async function handler(req, res) {
       id: genId(),
       filename,
       fileType,
-      docType, // 'notes' or 'past-paper'
+      docType,
+      ocrUsed,
       charCount: rawText.length,
       chunkCount: textChunks.length,
       chunks: textChunks,
@@ -164,7 +250,15 @@ export default async function handler(req, res) {
     existing.push(doc)
     await redisSet(key, existing)
 
-    res.status(200).json({ ok: true, docId: doc.id, filename, docType, chunkCount: textChunks.length, charCount: rawText.length })
+    res.status(200).json({ 
+      ok: true, 
+      docId: doc.id, 
+      filename, 
+      docType,
+      ocrUsed,
+      chunkCount: textChunks.length, 
+      charCount: rawText.length 
+    })
   } catch (e) {
     console.error('ingest-doc error:', e.message)
     res.status(500).json({ error: e.message })
