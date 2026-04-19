@@ -208,11 +208,24 @@ CRITICAL REQUIREMENTS:
 3. For short answer: 2 questions with parts (a)(b)(c), marks per part in brackets
 4. For extended response: 1 complex multi-step problem, 20+ marks
 5. Include physics formulas, SI units, scientific notation where appropriate
-6. For diagrams write [DIAGRAM: description] inline
+6. For diagrams: generate REAL SVG code like this: [SVG:<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200">...</svg>]
+   - Circuit diagrams: use lines for wires, rectangles for resistors, circles for batteries
+   - Force diagrams: use arrows with labels
+   - Graphs: use axes with labels and plotted lines
+   - If SVG is too complex, fall back to [DIAGRAM: description]
 7. Keep questions concise but rigorous — exam-ready for Year ${yearLevel} ${examBoard}
+8. Include a "coverPage" field in the JSON with school, subject, unit info
 
 Return ONLY valid JSON — no markdown, no explanation:
 {
+  "coverPage": {
+    "school": "Narrabundah College",
+    "subject": "${name}",
+    "year": "Year ${yearLevel}",
+    "examBoard": "${examBoard}",
+    "mockNumber": ${slotNumber},
+    "instructions": ["Write in black or blue pen", "Scientific calculator permitted", "Show all working for full marks", "Marks are awarded for correct working, not just final answers"]
+  },
   "title": "${name} — Mock Paper ${slotNumber}",
   "examBoard": "${examBoard}",
   "subject": "${name}",

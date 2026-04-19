@@ -116,6 +116,45 @@ export default function MockPaper() {
 
   const sel = { width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', appearance: 'none' }
 
+  function renderQuestion(text) {
+    if (!text) return null
+    const parts = []
+    let remaining = text
+
+    // Handle SVG diagrams [SVG:...]
+    while (remaining.includes('[SVG:')) {
+      const svgStart = remaining.indexOf('[SVG:')
+      const svgEnd = remaining.indexOf(']', svgStart + 5)
+      if (svgEnd === -1) break
+      if (svgStart > 0) parts.push(<span key={parts.length}>{remaining.slice(0, svgStart)}</span>)
+      const svgCode = remaining.slice(svgStart + 5, svgEnd)
+      parts.push(
+        <div key={parts.length} style={{ margin: '12px 0', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', justifyContent: 'center' }}
+          dangerouslySetInnerHTML={{ __html: svgCode }} />
+      )
+      remaining = remaining.slice(svgEnd + 1)
+    }
+
+    // Handle text diagrams [DIAGRAM:...]
+    while (remaining.includes('[DIAGRAM:')) {
+      const dStart = remaining.indexOf('[DIAGRAM:')
+      const dEnd = remaining.indexOf(']', dStart)
+      if (dEnd === -1) break
+      if (dStart > 0) parts.push(<span key={parts.length}>{remaining.slice(0, dStart)}</span>)
+      const desc = remaining.slice(dStart + 9, dEnd)
+      parts.push(
+        <div key={parts.length} style={{ margin: '10px 0', padding: '12px 16px', background: 'var(--bg3)', border: '1px dashed var(--border2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', fontStyle: 'italic', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <span style={{ fontSize: 16 }}>📐</span>
+          <span><strong>Diagram:</strong> {desc}</span>
+        </div>
+      )
+      remaining = remaining.slice(dEnd + 1)
+    }
+
+    if (remaining) parts.push(<span key={parts.length}>{remaining}</span>)
+    return parts.length > 0 ? parts : text
+  }
+
   // Paper viewer
   if (viewingPaper) {
     const { paper, sourceType, slotNumber, topicsCovered, completedAt } = viewingPaper
@@ -132,33 +171,68 @@ export default function MockPaper() {
           <button onClick={() => window.print()} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>Print</button>
         </div>
 
-        {/* Paper header */}
-        <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: '28px 32px', marginBottom: 16 }}>
-          <div style={{ textAlign: 'center', marginBottom: 20 }}>
-            <div style={{ fontSize: 11, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>{paper.examBoard} — Mock Examination</div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>{paper.title}</h1>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, maxWidth: 500, margin: '0 auto' }}>
-              <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 2 }}>Total marks</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{paper.totalMarks}</div>
+        {/* Cover page */}
+        <div style={{ background: 'var(--bg2)', border: '2px solid var(--border)', borderRadius: 14, padding: '36px 40px', marginBottom: 16, position: 'relative' }}>
+          {/* College header */}
+          <div style={{ textAlign: 'center', borderBottom: '3px double var(--border)', paddingBottom: 20, marginBottom: 20 }}>
+            <div style={{ fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 6 }}>Australian Capital Territory</div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px', marginBottom: 4 }}>
+              {paper.coverPage?.school || 'Student Mastery'}
+            </div>
+            <div style={{ width: 60, height: 3, background: 'var(--teal)', margin: '10px auto', borderRadius: 2 }} />
+            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)', marginTop: 10 }}>{paper.subject} — Year {paper.yearLevel}</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>{paper.examBoard} Mock Examination — Paper {viewingPaper.slotNumber}</div>
+          </div>
+
+          {/* Exam info grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+            {[
+              { label: 'Total marks', value: paper.totalMarks },
+              { label: 'Time allowed', value: paper.timeAllowed },
+              { label: 'Permitted materials', value: paper.allowedMaterials || 'Scientific calculator, ruler' }
+            ].map(({ label, value }) => (
+              <div key={label} style={{ background: 'var(--bg3)', borderRadius: 8, padding: '12px 14px', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{value}</div>
               </div>
-              <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 2 }}>Time allowed</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{paper.timeAllowed}</div>
-              </div>
-              <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 2 }}>Sections</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{paper.sections?.length}</div>
-              </div>
+            ))}
+          </div>
+
+          {/* Student details */}
+          <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {['Full name', 'Teacher', 'Class / Line', 'Date'].map(field => (
+                <div key={field}>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{field}</div>
+                  <div style={{ borderBottom: '1px solid var(--border)', height: 28 }} />
+                </div>
+              ))}
             </div>
           </div>
-          {paper.allowedMaterials && (
-            <div style={{ fontSize: 12, color: 'var(--text2)', textAlign: 'center', marginBottom: 12 }}>
-              <strong>Permitted materials:</strong> {paper.allowedMaterials}
-            </div>
-          )}
-          <div style={{ background: 'var(--bg3)', padding: '12px 16px', borderLeft: '3px solid var(--teal)', fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>
-            <strong>Instructions:</strong> {paper.instructions}
+
+          {/* Instructions */}
+          <div style={{ background: 'var(--bg3)', borderRadius: 10, padding: '16px 20px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Instructions to candidates</div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(paper.coverPage?.instructions || [
+                'Write in black or blue pen',
+                'Scientific calculator permitted',
+                'Show all working for full marks',
+                'Marks are awarded for correct working, not just final answers',
+                `Total marks: ${paper.totalMarks} | Time allowed: ${paper.timeAllowed}`
+              ]).map((inst, i) => (
+                <li key={i} style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>{inst}</li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Section summary */}
+          <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {(paper.sections || []).map((s, i) => (
+              <div key={i} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 20, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)' }}>
+                {s.name} — {s.marks} marks
+              </div>
+            ))}
           </div>
         </div>
 
@@ -183,20 +257,7 @@ export default function MockPaper() {
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.8, marginBottom: 12 }}>
-                      {q.question?.split('[DIAGRAM:').map((part, i) => {
-                        if (i === 0) return part
-                        const end = part.indexOf(']')
-                        const diagramDesc = part.slice(0, end)
-                        const rest = part.slice(end + 1)
-                        return (
-                          <span key={i}>
-                            <span style={{ display: 'block', margin: '10px 0', padding: '12px 16px', background: 'var(--bg3)', border: '1px dashed var(--border2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', fontStyle: 'italic' }}>
-                              📐 Diagram: {diagramDesc}
-                            </span>
-                            {rest}
-                          </span>
-                        )
-                      })}
+                      {renderQuestion(q.question)}
                     </div>
 
                     {/* Multi-part questions */}
