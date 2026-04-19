@@ -1,3 +1,4 @@
+// SubjectHub v3
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@clerk/clerk-react'
@@ -19,16 +20,21 @@ export default function SubjectHub() {
   const [quizError, setQuizError] = useState(null)
   const [deletingDoc, setDeletingDoc] = useState(null)
   const [extractingFormat, setExtractingFormat] = useState(false)
-  const [formatExtracted, setFormatExtracted] = useState(!!subject?.extractedFormat)
+  const [formatExtracted, setFormatExtracted] = useState(false)
 
   const subject = subjects.find(s => s.id === subjectId)
 
   useEffect(() => {
-    getToken().then(token => {
-      fetchSubjects(token)
+    getToken().then(async token => {
+      await fetchSubjects(token)
       fetchDocs(token)
     })
   }, [subjectId])
+
+  // Set formatExtracted when subject data loads
+  useEffect(() => {
+    if (subject?.extractedFormat) setFormatExtracted(true)
+  }, [subject])
 
   async function fetchDocs(token) {
     setLoadingDocs(true)
