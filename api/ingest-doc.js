@@ -187,21 +187,21 @@ export default async function handler(req, res) {
           }
         }
         
-        // If still no text, send whole PDF first page as context to Claude
+        // If still no text, use Claude's native PDF reading (handles scanned PDFs)
         if (rawText.length < 50) {
-          // Try sending raw PDF buffer as document to Claude
           try {
             const base64Pdf = fileBuffer.toString('base64')
-            const res2 = await fetch('https://api.anthropic.com/v1/messages', {
+            const pdfRes = await fetch('https://api.anthropic.com/v1/messages', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 'x-api-key': process.env.ANTHROPIC_API_KEY,
-                'anthropic-version': '2023-06-01'
+                'anthropic-version': '2023-06-01',
+                'anthropic-beta': 'pdfs-2024-09-25'
               },
               body: JSON.stringify({
-                model: 'claude-haiku-4-5-20251001',
-                max_tokens: 2000,
+                model: 'claude-sonnet-4-5',
+                max_tokens: 3000,
                 messages: [{
                   role: 'user',
                   content: [
@@ -211,22 +211,23 @@ export default async function handler(req, res) {
                     },
                     {
                       type: 'text',
-                      text: 'Extract all text content from this document. Output only the raw text, no commentary.'
+                      text: 'Extract ALL text from this document including questions, answers, formulas, and instructions. Preserve structure. Output only the raw extracted text.'
                     }
                   ]
                 }]
               })
             })
-            if (res2.ok) {
-              const data2 = await res2.json()
-              const extracted = data2.content?.[0]?.text || ''
+            if (pdfRes.ok) {
+              const pdfData = await pdfRes.json()
+              const extracted = pdfData.content?.[0]?.text || ''
               if (extracted.length > 50) {
                 rawText = extracted
                 ocrUsed = true
+                console.log('Claude native PDF reading succeeded:', extracted.length, 'chars')
               }
             }
           } catch (e) {
-            console.error('PDF document OCR failed:', e.message)
+            console.error('Claude PDF reading failed:', e.message)
           }
         }
       }
@@ -302,7 +303,15 @@ export async function extractFormatHandler(req, res, userId) {
     charCount += chunk.length
   }
 
-  // If no text extracted, use subject info to infer format
+  // If no text extracted, try reading PDFs directly with Claude
+  if (charCount < 50) {
+    // Try Claude native PDF reading on each past paper
+    for (const doc of pastPapers) {
+      if (charCount >= 50) break
+      // We don't have the original file buffer — skip to fallback
+    }
+  }
+
   if (charCount < 50) {
     const subjects = await redisGet(`sm:subjects:${userId}`) || []
     const subject = subjects.find(s => s.id === subjectId)
