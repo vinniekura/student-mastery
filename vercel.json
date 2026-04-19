@@ -6,7 +6,7 @@
     }
   ],
   "functions": {
-    "api/generate-mock.js": {
+    "api/mock-worker.js": {
       "maxDuration": 300
     },
     "api/*.js": {
