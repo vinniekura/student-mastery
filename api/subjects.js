@@ -1,5 +1,5 @@
-import { redisGet, redisSet } from '../src/server/redis.js'
-import { requireAuth, unauthorizedResponse } from '../src/server/clerk.js'
+import { redisGet, redisSet } from './lib/redis.js'
+import { requireAuth, unauthorizedResponse } from './lib/clerk.js'
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {

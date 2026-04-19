@@ -1,6 +1,6 @@
-import { redisGet, redisSet } from '../src/server/redis.js'
-import { requireAuth } from '../src/server/clerk.js'
-import { extractTextViaVision, extractPdfImages } from '../src/server/ocr.js'
+import { redisGet, redisSet } from './lib/redis.js'
+import { requireAuth } from './lib/clerk.js'
+import { extractTextViaVision, extractPdfImages } from './lib/ocr.js'
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {

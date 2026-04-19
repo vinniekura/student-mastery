@@ -1,4 +1,4 @@
-import { redisGet, redisSet, redisKeys } from '../src/server/redis.js'
+import { redisGet, redisSet, redisKeys } from './lib/redis.js'
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'digest@datamastery.com.au'
