@@ -70,7 +70,7 @@ export default function SubjectHub() {
     setExtractingFormat(true)
     try {
       const token = await getToken()
-      const res = await fetch(`/api/extract-format?subjectId=${subjectId}`, {
+      const res = await fetch(`/api/ingest-doc?action=extract-format&subjectId=${subjectId}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       })

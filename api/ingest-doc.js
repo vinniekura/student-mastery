@@ -1,6 +1,6 @@
 import { redisGet, redisSet } from './lib/redis.js'
 import { requireAuth } from './lib/clerk.js'
-import { extractTextViaVision, extractPdfImages } from './ocr-doc.js'
+import { extractTextViaVision, extractPdfImages } from './lib/ocr.js'
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -103,6 +103,17 @@ function indexOf(buf, search, start = 0) {
 }
 
 export default async function handler(req, res) {
+  // Route to format extraction if action=extract-format
+  const qIdx = (req.url || '').indexOf('?')
+  const params = new URLSearchParams(qIdx >= 0 ? req.url.slice(qIdx + 1) : '')
+  if (params.get('action') === 'extract-format') {
+    let userId
+    try { userId = await requireAuth(req) }
+    catch (e) { res.status(401).json({ error: 'Unauthorized' }); return }
+    try { return await extractFormatHandler(req, res, userId) }
+    catch (e) { res.status(500).json({ error: e.message }); return }
+  }
+
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return }
 
   let userId
@@ -263,4 +274,72 @@ export default async function handler(req, res) {
     console.error('ingest-doc error:', e.message)
     res.status(500).json({ error: e.message })
   }
+}
+
+// Also handles format extraction — POST /api/ingest-doc?action=extract-format
+export async function extractFormatHandler(req, res, userId) {
+  const { url = '' } = req
+  const qIndex = url.indexOf('?')
+  const params = new URLSearchParams(qIndex >= 0 ? url.slice(qIndex + 1) : '')
+  const subjectId = params.get('subjectId')
+
+  if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
+
+  const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+  const pastPapers = allDocs.filter(d => d.docType === 'past-paper')
+
+  if (pastPapers.length === 0) {
+    res.status(400).json({ error: 'No past papers uploaded yet.' })
+    return
+  }
+
+  const chunks = pastPapers.flatMap(d => d.chunks || [])
+  let context = ''
+  let charCount = 0
+  for (const chunk of chunks) {
+    if (charCount + chunk.length > 5000) break
+    context += chunk + '\n\n'
+    charCount += chunk.length
+  }
+
+  if (charCount < 50) {
+    res.status(400).json({ error: 'Past papers have no extractable text.' })
+    return
+  }
+
+  const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1500,
+      messages: [
+        { role: 'user', content: `Analyse this exam paper and extract its exact format as JSON:\n\n${context}\n\nReturn ONLY JSON: {"totalMarks":0,"timeAllowed":"","sections":[{"name":"","type":"mcq","marks":0,"questionCount":0,"instructions":"","hasDiagrams":false}],"formulaSheet":false,"allowedMaterials":"","questionStyle":""}` },
+        { role: 'assistant', content: '{' }
+      ]
+    })
+  })
+
+  if (!claudeRes.ok) throw new Error(`Claude error: ${claudeRes.status}`)
+  const data = await claudeRes.json()
+  const raw = '{' + (data.content?.[0]?.text || '{}')
+  
+  let format
+  try {
+    format = JSON.parse(raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim())
+  } catch { throw new Error('Could not parse format') }
+
+  const subjects = await redisGet(`sm:subjects:${userId}`) || []
+  const idx = subjects.findIndex(s => s.id === subjectId)
+  if (idx >= 0) {
+    subjects[idx].extractedFormat = format
+    subjects[idx].formatExtractedAt = new Date().toISOString()
+    await redisSet(`sm:subjects:${userId}`, subjects)
+  }
+
+  res.status(200).json({ ok: true, format })
 }
