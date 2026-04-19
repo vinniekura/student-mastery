@@ -302,8 +302,30 @@ export async function extractFormatHandler(req, res, userId) {
     charCount += chunk.length
   }
 
+  // If no text extracted, use subject info to infer format
   if (charCount < 50) {
-    res.status(400).json({ error: 'Past papers have no extractable text.' })
+    const subjects = await redisGet(`sm:subjects:${userId}`) || []
+    const subject = subjects.find(s => s.id === subjectId)
+    const fallbackFormat = {
+      totalMarks: subject?.paperFormat?.totalMarks || 100,
+      timeAllowed: `${subject?.paperFormat?.timeLimitMins || 180} minutes`,
+      sections: (subject?.paperFormat?.sections || ['Multiple choice', 'Short answer', 'Extended response']).map(name => ({
+        name, type: name.toLowerCase().includes('choice') ? 'mcq' : 'extended',
+        marks: Math.floor((subject?.paperFormat?.totalMarks || 100) / 3),
+        questionCount: 5, instructions: '', hasDiagrams: false
+      })),
+      formulaSheet: false,
+      allowedMaterials: 'Scientific calculator',
+      questionStyle: `Standard ${subject?.examBoard || 'AU'} exam format`,
+      inferredFromSubject: true
+    }
+    const idx = subjects.findIndex(s => s.id === subjectId)
+    if (idx >= 0) {
+      subjects[idx].extractedFormat = fallbackFormat
+      subjects[idx].formatExtractedAt = new Date().toISOString()
+      await redisSet(`sm:subjects:${userId}`, subjects)
+    }
+    res.status(200).json({ ok: true, format: fallbackFormat, warning: 'PDFs had no extractable text — using subject settings as format template. Re-upload PDFs for better results.' })
     return
   }
 
