@@ -9,9 +9,14 @@
     "api/mock-worker.js": {
       "maxDuration": 300
     },
-    "api/*.js": {
-      "maxDuration": 60
-    }
+    "api/docs.js": { "maxDuration": 60 },
+    "api/generate-mock.js": { "maxDuration": 60 },
+    "api/ingest-doc.js": { "maxDuration": 60 },
+    "api/papers.js": { "maxDuration": 60 },
+    "api/profile.js": { "maxDuration": 60 },
+    "api/quick-quiz.js": { "maxDuration": 60 },
+    "api/send-digest.js": { "maxDuration": 60 },
+    "api/subjects.js": { "maxDuration": 60 }
   },
   "regions": ["syd1"],
   "rewrites": [

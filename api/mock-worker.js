@@ -1,4 +1,4 @@
-import { redisGet, redisSet } from '../src/server/redis.js'
+import { redisGet, redisSet } from './lib/redis.js'
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {
