@@ -1,13 +1,14 @@
 import { useState, useRef } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 
-export default function DocUploader({ subjectId, onSuccess }) {
+export default function DocUploader({ subjectId, onSuccess, subject }) {
   const { getToken } = useAuth()
-  const [dragging, setDragging] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState(null)
-  const [progress, setProgress] = useState(null)
-  const [docType, setDocType] = useState('notes')
+  const [dragging, setDragging]     = useState(false)
+  const [uploading, setUploading]   = useState(false)
+  const [error, setError]           = useState(null)
+  const [progress, setProgress]     = useState(null)
+  const [docType, setDocType]       = useState('notes')
+  const [unit, setUnit]             = useState('')
   const inputRef = useRef()
 
   const ACCEPTED = ['.pdf', '.docx', '.txt', '.jpg', '.jpeg', '.png']
@@ -22,6 +23,12 @@ export default function DocUploader({ subjectId, onSuccess }) {
     }
     if (file.size > MAX_SIZE) { setError('File too large. Max 15MB.'); return }
 
+    // Validate unit for past papers
+    if (docType === 'past-paper' && !unit.trim()) {
+      setError('Please enter which unit this past paper covers (e.g. Unit 3)')
+      return
+    }
+
     setUploading(true)
     setError(null)
 
@@ -34,6 +41,9 @@ export default function DocUploader({ subjectId, onSuccess }) {
       formData.append('file', file)
       formData.append('subjectId', subjectId)
       formData.append('docType', docType)
+      if (docType === 'past-paper' && unit.trim()) {
+        formData.append('unit', unit.trim())
+      }
 
       const res = await fetch('/api/ingest-doc', {
         method: 'POST',
@@ -50,6 +60,7 @@ export default function DocUploader({ subjectId, onSuccess }) {
       setProgress(msg)
       setTimeout(() => setProgress(null), 4000)
       onSuccess?.(data)
+      setUnit('') // reset unit after successful upload
     } catch (err) {
       setError(err.message)
     } finally {
@@ -58,7 +69,8 @@ export default function DocUploader({ subjectId, onSuccess }) {
   }
 
   function handleDrop(e) {
-    e.preventDefault(); setDragging(false)
+    e.preventDefault()
+    setDragging(false)
     const file = e.dataTransfer.files[0]
     if (file) uploadFile(file)
   }
@@ -69,17 +81,29 @@ export default function DocUploader({ subjectId, onSuccess }) {
     e.target.value = ''
   }
 
-  const typeBtn = (val, label, desc) => (
-    <button onClick={() => setDocType(val)} style={{
-      flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
-      border: `1px solid ${docType === val ? 'var(--teal-border)' : 'var(--border)'}`,
-      background: docType === val ? 'var(--teal-bg)' : 'var(--bg3)',
-      transition: 'all .15s'
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: docType === val ? 'var(--teal2)' : 'var(--text)', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 10, color: docType === val ? 'var(--teal2)' : 'var(--text3)', opacity: 0.8 }}>{desc}</div>
-    </button>
-  )
+  function typeBtn(value, label, hint) {
+    const active = docType === value
+    return (
+      <button
+        onClick={() => { setDocType(value); setError(null) }}
+        style={{
+          padding: '6px 14px', borderRadius: 20, fontSize: 12, cursor: 'pointer',
+          background: active ? 'var(--teal)' : 'var(--bg3)',
+          color: active ? '#fff' : 'var(--text2)',
+          border: active ? 'none' : '1px solid var(--border)',
+          fontWeight: active ? 600 : 400
+        }}
+        title={hint}
+      >
+        {label}
+      </button>
+    )
+  }
+
+  // Derive unit list from subject topics or common BSSS units
+  const unitSuggestions = subject?.topics?.length > 0
+    ? []  // if topics exist, let them free-type
+    : ['Unit 1', 'Unit 2', 'Unit 3', 'Unit 4']
 
   return (
     <div>
@@ -88,6 +112,42 @@ export default function DocUploader({ subjectId, onSuccess }) {
         {typeBtn('notes', 'Study notes', 'Used for quizzes')}
         {typeBtn('past-paper', 'Past paper', 'Used for mock exams')}
       </div>
+
+      {/* Unit selector — only shown for past papers */}
+      {docType === 'past-paper' && (
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
+            Which unit does this past paper cover? <span style={{ color: 'var(--red)' }}>*</span>
+          </label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+            {unitSuggestions.map(u => (
+              <button
+                key={u}
+                onClick={() => setUnit(u)}
+                style={{
+                  padding: '4px 10px', borderRadius: 12, fontSize: 11, cursor: 'pointer',
+                  background: unit === u ? 'var(--teal-bg)' : 'var(--bg3)',
+                  color: unit === u ? 'var(--teal2)' : 'var(--text3)',
+                  border: unit === u ? '1px solid var(--teal-border)' : '1px solid var(--border)'
+                }}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={unit}
+            onChange={e => setUnit(e.target.value)}
+            placeholder='e.g. Unit 3 — Motion and Forces'
+            style={{
+              width: '100%', padding: '7px 10px', borderRadius: 7,
+              border: '1px solid var(--border)', background: 'var(--bg3)',
+              color: 'var(--text)', fontSize: 12
+            }}
+          />
+        </div>
+      )}
 
       {/* Drop zone */}
       <div
