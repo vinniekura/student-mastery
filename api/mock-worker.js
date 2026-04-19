@@ -82,14 +82,14 @@ export default async function handler(req, res) {
 
   const qstashSig = req.headers['upstash-signature']
   if (!qstashSig && process.env.NODE_ENV === 'production') {
-    // Allow through — we rely on job data integrity
+    // Allow through — rely on job data integrity
   }
 
   try {
     const {
       jobId, userId, subjectId, slotNumber,
       customInstructions = '', replaceSlot,
-      targetUnit = null   // ← unit scoping: null means whole course
+      confirmedScope = null   // ← student-confirmed scope from analyse step
     } = await parseBody(req)
 
     if (!jobId || !userId || !subjectId) {
@@ -112,25 +112,19 @@ export default async function handler(req, res) {
 
     const auFormat = AU_EXAM_FORMATS[examBoard?.toUpperCase()]
     const effectiveFormat = auFormat || extractedFormat
-    const isCompetitive = ['UCAT','GAMSAT','IELTS','SELECTIVE','AMC','OC'].includes(examBoard?.toUpperCase())
 
-    // ── Load docs — filter to targetUnit if specified ─────────────────────────
-    const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+    // ── Extract confirmed scope fields ────────────────────────────────────────
+    const scopeTerm       = confirmedScope?.term || null
+    const scopeTopics     = confirmedScope?.topics?.length > 0 ? confirmedScope.topics : null
+    const scopeExamType   = confirmedScope?.examType || null
+    const scopeTimeMins   = confirmedScope?.format?.timeMins || null
+    const scopeTotalMarks = confirmedScope?.format?.totalMarks || null
+
+    // ── Load docs ─────────────────────────────────────────────────────────────
+    const allDocs    = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
     const pastPapers = allDocs.filter(d => d.docType === 'past-paper')
     const notesDocs  = allDocs.filter(d => d.docType === 'notes' || !d.docType)
-
-    // If targetUnit is set, prefer docs tagged to that unit
-    let docsToUse = pastPapers.length > 0 ? pastPapers : notesDocs
-    let unitScopedDocs = []
-    if (targetUnit) {
-      unitScopedDocs = allDocs.filter(d => d.unit === targetUnit)
-      if (unitScopedDocs.length > 0) {
-        docsToUse = unitScopedDocs
-        console.log(`Unit scoped to "${targetUnit}": using ${unitScopedDocs.length} docs`)
-      } else {
-        console.log(`No docs found for unit "${targetUnit}", falling back to all docs`)
-      }
-    }
+    const docsToUse  = pastPapers.length > 0 ? pastPapers : notesDocs
 
     let docContext = ''
     let sourceType = 'syllabus'
@@ -149,22 +143,25 @@ export default async function handler(req, res) {
     const existingPapers2 = await redisGet(paperKey) || []
     const usedTopics = [...new Set(
       existingPapers2
-        .filter(p => p.status === 'ready' && p.id !== jobId && (!targetUnit || p.targetUnit === targetUnit))
+        .filter(p => p.status === 'ready' && p.id !== jobId && (!scopeTerm || p.scopeTerm === scopeTerm))
         .flatMap(p => p.topicsCovered || [])
     )]
-    const allTopics = topics.length > 0 ? topics : [`General ${name} content`]
+    const allTopics    = scopeTopics || (topics.length > 0 ? topics : [`General ${name} content`])
     const unusedTopics = allTopics.filter(t => !usedTopics.includes(t))
-    const memoryNote = usedTopics.length > 0
+    const memoryNote   = usedTopics.length > 0
       ? `PAPER MEMORY: Already covered in previous mocks: ${usedTopics.join(', ')}. Prioritise these untested topics: ${unusedTopics.length > 0 ? unusedTopics.join(', ') : 'use fresh angles on all topics'}.`
       : ''
 
-    const topicsList = allTopics.length > 0 ? allTopics.join(', ') : `General ${name} content`
+    const topicsList = allTopics.join(', ')
 
+    // ── Build section instructions ────────────────────────────────────────────
     let sectionInstructions = ''
     if (effectiveFormat) {
+      const totalM = scopeTotalMarks || effectiveFormat.totalMarks
+      const timeM  = scopeTimeMins   || effectiveFormat.timeLimitMins
       sectionInstructions = `
 EXAM FORMAT — follow exactly:
-Total marks: ${effectiveFormat.totalMarks} | Time: ${effectiveFormat.timeLimitMins} minutes | Materials: ${effectiveFormat.allowedMaterials || 'Standard'}
+Total marks: ${totalM} | Time: ${timeM} minutes | Materials: ${effectiveFormat.allowedMaterials || 'Standard'}
 Style guide: ${effectiveFormat.style}
 
 SECTIONS:
@@ -177,11 +174,11 @@ ${effectiveFormat.sections.map((s, i) =>
       const sections = Array.isArray(paperFormat.sections)
         ? paperFormat.sections
         : ['Multiple choice', 'Short answer', 'Extended response']
-      const mps = Math.floor((paperFormat.totalMarks || 100) / sections.length)
-      sectionInstructions = `Sections: ${sections.join(', ')} — ${mps} marks each. Total: ${paperFormat.totalMarks || 100} marks, ${paperFormat.timeLimitMins || 180} minutes.`
+      const mps = Math.floor((scopeTotalMarks || paperFormat.totalMarks || 100) / sections.length)
+      sectionInstructions = `Sections: ${sections.join(', ')} — ${mps} marks each. Total: ${scopeTotalMarks || paperFormat.totalMarks || 100} marks, ${scopeTimeMins || paperFormat.timeLimitMins || 180} minutes.`
     }
 
-    // ── Build prompt ──────────────────────────────────────────────────────────
+    // ── Build Claude prompt ───────────────────────────────────────────────────
     const prompt = `You are an expert ${examBoard} exam paper writer for ${name}, Year ${yearLevel}, ${state}, Australia.
 
 Create Mock Paper ${slotNumber} — a complete, realistic exam paper.
@@ -199,11 +196,11 @@ CRITICAL REQUIREMENTS:
 2. For MCQ: exactly 1 mark each, 4 options (A/B/C/D), one clearly correct answer
 3. For short answer: 2 questions with parts (a)(b)(c), marks per part in brackets
 4. For extended response: 1 complex multi-step problem, 20+ marks
-5. Include physics formulas, SI units, scientific notation where appropriate
+5. Include formulas, SI units, scientific notation where appropriate
 6. DIAGRAMS: When a question needs a diagram, use [DIAGRAM_REF:N] in the question text. Add the diagram to the top-level "diagrams" array with matching "id", "type" (circuit/force/graph/wave/other), and "description". Do NOT embed SVG inside question strings.
 7. Keep questions concise but rigorous — exam-ready for Year ${yearLevel} ${examBoard}
 8. Include a "coverPage" field in the JSON with school, subject, unit info
-${targetUnit ? `9. UNIT SCOPE — CRITICAL: This mock covers "${targetUnit}" ONLY. Every question must be from "${targetUnit}" content. Do NOT include topics from other units. The coverPage should note the unit scope.` : ''}
+${scopeTerm ? `9. SCOPE — CRITICAL: This mock is for "${scopeTerm}" (${scopeExamType || 'exam'}). Every single question MUST come ONLY from these topics: ${topicsList}. Do NOT include topics from other terms or units. The paper title and coverPage must reference "${scopeTerm}".` : ''}
 
 Return ONLY valid JSON — no markdown, no explanation:
 {
@@ -213,18 +210,19 @@ Return ONLY valid JSON — no markdown, no explanation:
     "year": "Year ${yearLevel}",
     "examBoard": "${examBoard}",
     "mockNumber": ${slotNumber},
-    ${targetUnit ? `"unitScope": "${targetUnit}",` : ''}
+    ${scopeTerm ? `"scopeTerm": "${scopeTerm}",` : ''}
     "instructions": ["Write in black or blue pen", "Scientific calculator permitted", "Show all working for full marks", "Marks are awarded for correct working, not just final answers"]
   },
   "diagrams": [],
-  "title": "${name} — Mock Paper ${slotNumber}${targetUnit ? ` (${targetUnit})` : ''}",
+  "title": "${name} — Mock Paper ${slotNumber}${scopeTerm ? ` (${scopeTerm})` : ''}",
   "examBoard": "${examBoard}",
   "subject": "${name}",
   "yearLevel": "${yearLevel}",
   "state": "${state}",
-  "targetUnit": ${targetUnit ? `"${targetUnit}"` : 'null'},
-  "totalMarks": ${effectiveFormat?.totalMarks || 100},
-  "timeAllowed": "${effectiveFormat?.timeLimitMins || 180} minutes",
+  "scopeTerm": ${scopeTerm ? `"${scopeTerm}"` : 'null'},
+  "scopeExamType": ${scopeExamType ? `"${scopeExamType}"` : 'null'},
+  "totalMarks": ${scopeTotalMarks || effectiveFormat?.totalMarks || 100},
+  "timeAllowed": "${scopeTimeMins || effectiveFormat?.timeLimitMins || 180} minutes",
   "allowedMaterials": "${effectiveFormat?.allowedMaterials || 'Scientific calculator, ruler'}",
   "instructions": "Read all questions carefully. Show all working for full marks.",
   "sections": [
@@ -282,7 +280,7 @@ Return ONLY valid JSON — no markdown, no explanation:
       throw new Error('Invalid paper structure returned')
     }
 
-    // ── Generate SVGs for diagrams ────────────────────────────────────────────
+    // Generate SVGs for diagrams
     if (paper.diagrams && paper.diagrams.length > 0) {
       paper.diagrams = paper.diagrams.map(d => ({ ...d, svg: generateDiagramSVG(d) }))
     }
@@ -300,9 +298,10 @@ Return ONLY valid JSON — no markdown, no explanation:
       subjectId,
       subjectName: name,
       examBoard,
-      targetUnit: targetUnit || null,   // ← persisted on the record
-      generatedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
+      scopeTerm:     scopeTerm || null,
+      scopeExamType: scopeExamType || null,
+      generatedAt:   new Date().toISOString(),
+      completedAt:   new Date().toISOString(),
       sourceType,
       docCount: allDocs.length,
       topicsCovered,
@@ -319,7 +318,7 @@ Return ONLY valid JSON — no markdown, no explanation:
     const sorted = finalPapers.slice(0, 5).sort((a, b) => a.slotNumber - b.slotNumber)
     await redisSet(paperKey, sorted)
 
-    res.status(200).json({ ok: true, jobId, slotNumber, targetUnit })
+    res.status(200).json({ ok: true, jobId, slotNumber, scopeTerm })
 
   } catch (e) {
     console.error('mock-worker error:', e.message)
@@ -464,12 +463,10 @@ function buildWaveSVG(description) {
   <defs>
     <marker id="la" markerWidth="8" markerHeight="8" refX="2" refY="3" orient="auto"><path d="M8,0 L0,3 L8,6 z" fill="#374151"/></marker>
     <marker id="ra" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#374151"/></marker>
-    <marker id="ra2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#dc2626"/></marker>
-    <marker id="la2" markerWidth="8" markerHeight="8" refX="2" refY="3" orient="auto"><path d="M8,0 L0,3 L8,6 z" fill="#dc2626"/></marker>
   </defs>
   <line x1="100" y1="195" x2="260" y2="195" stroke="#374151" stroke-width="1.5" marker-start="url(#la)" marker-end="url(#ra)"/>
   <text x="180" y="210" font-size="11" fill="#374151" text-anchor="middle">λ (wavelength)</text>
-  <line x1="348" y1="40" x2="348" y2="110" stroke="#dc2626" stroke-width="1.5" marker-start="url(#la2)" marker-end="url(#ra2)"/>
+  <line x1="348" y1="40" x2="348" y2="110" stroke="#dc2626" stroke-width="1.5" marker-start="url(#la)" marker-end="url(#ra)"/>
   <text x="360" y="78" font-size="11" fill="#dc2626">A</text>
   <text x="14" y="113" font-size="11" fill="#374151" text-anchor="end">0</text>
   <text x="190" y="218" font-size="10" fill="#666" text-anchor="middle">Transverse wave diagram</text>
