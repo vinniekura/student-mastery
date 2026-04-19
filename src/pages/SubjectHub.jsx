@@ -19,21 +19,16 @@ export default function SubjectHub() {
   const [quizError, setQuizError] = useState(null)
   const [deletingDoc, setDeletingDoc] = useState(null)
   const [extractingFormat, setExtractingFormat] = useState(false)
-  const [formatExtracted, setFormatExtracted] = useState(false)
+  const [formatExtracted, setFormatExtracted] = useState(!!subject?.extractedFormat)
 
   const subject = subjects.find(s => s.id === subjectId)
 
   useEffect(() => {
-    getToken().then(async token => {
-      await fetchSubjects(token)
+    getToken().then(token => {
+      fetchSubjects(token)
       fetchDocs(token)
     })
   }, [subjectId])
-
-  // Set formatExtracted when subject data loads
-  useEffect(() => {
-    if (subject?.extractedFormat) setFormatExtracted(true)
-  }, [subject])
 
   async function fetchDocs(token) {
     setLoadingDocs(true)
