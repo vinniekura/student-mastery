@@ -22,6 +22,16 @@ function extractJson(text) {
   throw new Error('Could not parse analysis response')
 }
 
+// Strip control characters that break JSON serialization
+function sanitizeText(text) {
+  if (!text) return ''
+  return text
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ')  // control chars except \t \n \r
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+}
+
 export default async function handler(req, res) {
   let userId
   try { userId = await requireAuth(req) }
@@ -31,7 +41,7 @@ export default async function handler(req, res) {
   const qIdx = url.indexOf('?')
   const params = new URLSearchParams(qIdx >= 0 ? url.slice(qIdx + 1) : '')
   const subjectId = params.get('subjectId')
-  const action = params.get('action')   // 'analyse' or 'scope'
+  const action = params.get('action')
   const method = req.method
 
   if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
@@ -41,7 +51,7 @@ export default async function handler(req, res) {
 
   try {
 
-    // ── GET /api/docs?subjectId=X ─────────────────────── list docs ──────────
+    // GET /api/docs?subjectId=X — list docs (no chunks)
     if (method === 'GET' && !action) {
       const docs = await redisGet(docsKey) || []
       const summary = docs.map(({ chunks, ...rest }) => rest)
@@ -49,14 +59,14 @@ export default async function handler(req, res) {
       return
     }
 
-    // ── GET /api/docs?subjectId=X&action=scope ────────── get saved scope ────
+    // GET /api/docs?subjectId=X&action=scope — get saved scope
     if (method === 'GET' && action === 'scope') {
       const scope = await redisGet(scopeKey) || null
       res.status(200).json({ scope })
       return
     }
 
-    // ── DELETE /api/docs?subjectId=X&docId=Y ─────────── delete a doc ────────
+    // DELETE /api/docs?subjectId=X&docId=Y — delete a doc
     if (method === 'DELETE' && params.get('docId')) {
       const docId = params.get('docId')
       const docs = await redisGet(docsKey) || []
@@ -65,14 +75,14 @@ export default async function handler(req, res) {
       return
     }
 
-    // ── DELETE /api/docs?subjectId=X&action=scope ─────── clear scope ─────────
+    // DELETE /api/docs?subjectId=X&action=scope — clear scope
     if (method === 'DELETE' && action === 'scope') {
       await redisSet(scopeKey, null)
       res.status(200).json({ ok: true })
       return
     }
 
-    // ── POST /api/docs?subjectId=X&action=scope ───────── confirm scope ────────
+    // POST /api/docs?subjectId=X&action=scope — confirm scope
     if (method === 'POST' && action === 'scope') {
       const body = await parseBody(req)
       if (!body.confirmedScope) { res.status(400).json({ error: 'confirmedScope required' }); return }
@@ -82,7 +92,7 @@ export default async function handler(req, res) {
       return
     }
 
-    // ── POST /api/docs?subjectId=X&action=analyse ─────── run analysis ─────────
+    // POST /api/docs?subjectId=X&action=analyse — run analysis across all docs
     if (method === 'POST' && action === 'analyse') {
       const allDocs = await redisGet(docsKey) || []
       if (allDocs.length === 0) {
@@ -93,25 +103,28 @@ export default async function handler(req, res) {
       const subjects = await redisGet(`sm:subjects:${userId}`) || []
       const subject = subjects.find(s => s.id === subjectId) || {}
 
-      // Sample text from all docs — cap at 4000 chars
+      // Sample text from all docs — sanitize every chunk
       let docSamples = ''
       let totalChars = 0
-      const MAX_CHARS = 4000
+      const MAX_CHARS = 3000
 
       for (const doc of allDocs) {
-        const label = `\n--- Document: ${doc.filename} (${doc.docType || 'notes'}) ---\n`
+        const label = `\n--- ${sanitizeText(doc.filename)} (${doc.docType || 'notes'}) ---\n`
         docSamples += label
         totalChars += label.length
+
         for (const chunk of (doc.chunks || [])) {
-          if (totalChars + chunk.length > MAX_CHARS) break
-          docSamples += chunk + '\n'
-          totalChars += chunk.length
+          const clean = sanitizeText(chunk)
+          if (!clean) continue
+          if (totalChars + clean.length > MAX_CHARS) break
+          docSamples += clean + '\n'
+          totalChars += clean.length
         }
         if (totalChars >= MAX_CHARS) break
       }
 
       const docSummary = allDocs.map(d =>
-        `• ${d.filename} — ${d.docType || 'notes'}`
+        `• ${sanitizeText(d.filename)} — ${d.docType || 'notes'} (${d.chunkCount || 0} chunks)`
       ).join('\n')
 
       const prompt = `You are analysing a student's uploaded study documents to determine the scope for a mock exam.
@@ -125,20 +138,17 @@ DOCUMENT CONTENT SAMPLE:
 ${docSamples}
 
 Analyse ALL the documents together and determine:
-1. What TERM or assessment period they collectively cover (Term 1, Term 2, Semester 1, etc.)
-2. What TOPICS are covered across all documents
-3. What TYPE of exam they are preparing for (unit test, final exam, UCAT, GAMSAT, IELTS, etc.)
-4. The likely EXAM FORMAT (marks, time, section types)
-5. How CONFIDENT you are in this analysis (high/medium/low)
-
-For competitive exams (UCAT, GAMSAT, IELTS, AMC, selective), identify the specific sections/modules.
-For school exams, identify the term/semester and specific unit content.
+1. What TERM or assessment period they collectively cover (Term 1, Term 2, Term 3, Term 4, Semester 1, Semester 2)
+2. What TOPICS are covered across all documents — be specific, list individual physics/subject topics
+3. What TYPE of exam (unit test, final exam, assignment, UCAT, GAMSAT, IELTS)
+4. The EXAM FORMAT (total marks, time in minutes, section types)
+5. How CONFIDENT you are (high/medium/low) and why
 
 Return ONLY valid JSON, no markdown:
 {
   "term": "Term 1",
   "termOptions": ["Term 1", "Term 2", "Term 3", "Term 4"],
-  "topics": ["Electric fields", "Magnetic fields", "Gravitational fields", "Capacitors", "RC circuits"],
+  "topics": ["Electric fields and charged particle energy", "Magnetic fields", "Gravitational fields"],
   "examType": "unit test",
   "examTypeOptions": ["unit test", "final exam", "assignment", "UCAT", "GAMSAT", "IELTS"],
   "format": {
@@ -148,10 +158,11 @@ Return ONLY valid JSON, no markdown:
   },
   "curriculum": "BSSS",
   "confidence": "high",
-  "confidenceReason": "All documents clearly reference Unit 3a Fields content",
+  "confidenceReason": "Both documents clearly show Unit 3a Fields content with electric, magnetic and gravitational field questions",
   "summaryLine": "Term 1 · Unit 3a Fields · BSSS · 60 min unit test"
 }`
 
+      // Call Claude haiku — cheapest and fast enough for analysis
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -171,7 +182,7 @@ Return ONLY valid JSON, no markdown:
 
       if (!claudeRes.ok) {
         const err = await claudeRes.text()
-        throw new Error(`Claude API error: ${claudeRes.status} ${err.slice(0, 100)}`)
+        throw new Error(`Claude API error: ${claudeRes.status} ${err.slice(0, 200)}`)
       }
 
       const claudeData = await claudeRes.json()
@@ -181,7 +192,7 @@ Return ONLY valid JSON, no markdown:
       const scope = {
         ...analysis,
         docCount: allDocs.length,
-        docNames: allDocs.map(d => d.filename),
+        docNames: allDocs.map(d => sanitizeText(d.filename)),
         analysedAt: new Date().toISOString(),
         confirmed: false
       }
