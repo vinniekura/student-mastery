@@ -83,13 +83,14 @@ export default async function handler(req, res) {
         'Upstash-Retries': '2',
         'Upstash-Delay': '0s'
       },
-      body: JSON.stringify({
-        jobId,
-        userId,
-        subjectId,
-        slotNumber,
-        customInstructions,
-        replaceSlot
+     body: JSON.stringify({
+    jobId,
+    userId,
+     subjectId,
+    slotNumber,
+    customInstructions,
+     replaceSlot,
+     confirmedScope
       })
     })
 
