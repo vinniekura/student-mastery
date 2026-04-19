@@ -1,0 +1,44 @@
+# ingest-doc.js — 3 surgical edits (open in VS Code and find/replace)
+
+## EDIT 1 — declare unit variable (~line 170)
+Find:
+  let fileBuffer = null, filename = 'unknown', subjectId = null
+  let fileType = 'pdf', docType = 'notes', mimeType = ''
+
+Replace with:
+  let fileBuffer = null, filename = 'unknown', subjectId = null
+  let fileType = 'pdf', docType = 'notes', mimeType = '', unit = ''
+
+
+## EDIT 2 — parse unit from FormData (~line 185, inside the for loop)
+Find:
+    } else if (disposition.includes('name="docType"')) {
+      docType = part.data.toString('utf8').trim() || 'notes'
+
+Replace with:
+    } else if (disposition.includes('name="docType"')) {
+      docType = part.data.toString('utf8').trim() || 'notes'
+    } else if (disposition.includes('name="unit"')) {
+      unit = part.data.toString('utf8').trim()
+
+
+## EDIT 3 — save unit on the doc object (~line 230)
+Find:
+  const doc = {
+    id: genId(),
+    filename,
+    fileType,
+    docType,
+    ocrUsed,
+
+Replace with:
+  const doc = {
+    id: genId(),
+    filename,
+    fileType,
+    docType,
+    unit: unit || null,
+    ocrUsed,
+
+
+That's it — 3 additions, nothing else changes.
