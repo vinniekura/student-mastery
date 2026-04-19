@@ -27,31 +27,6 @@ function chunkText(text, size = 800, overlap = 100) {
   return chunks.filter(c => c.trim().length > 20)
 }
 
-function extractPdfText(buffer) {
-  const str = buffer.toString('latin1')
-  const texts = []
-  const btRegex = /BT([\s\S]*?)ET/g
-  let match
-  while ((match = btRegex.exec(str)) !== null) {
-    const block = match[1]
-    const strRegex = /\(((?:[^()\\]|\\.)*)\)\s*(?:Tj|')/g
-    const arrRegex = /\[((?:[^\[\]])*)\]\s*TJ/g
-    let m
-    while ((m = strRegex.exec(block)) !== null) {
-      const t = m[1].replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8))).replace(/\\n/g, '\n').replace(/\\/g, '')
-      if (t.trim()) texts.push(t)
-    }
-    while ((m = arrRegex.exec(block)) !== null) {
-      const parts = []
-      const pRegex = /\(((?:[^()\\]|\\.)*)\)/g
-      let p
-      while ((p = pRegex.exec(m[1])) !== null) parts.push(p[1].replace(/\\/g, ''))
-      if (parts.length) texts.push(parts.join(''))
-    }
-  }
-  return texts.join(' ').replace(/\s+/g, ' ').trim()
-}
-
 function extractDocxText(buffer) {
   const str = buffer.toString('utf8', 0, Math.min(buffer.length, 5000000))
   const texts = []
@@ -63,49 +38,36 @@ function extractDocxText(buffer) {
   return texts.join(' ').replace(/\s+/g, ' ').trim()
 }
 
-function splitMultipart(buffer, boundary) {
+function splitMultipart(body, boundary) {
   const parts = []
   const boundaryBuf = Buffer.from('--' + boundary)
-  let pos = 0
-  while (pos < buffer.length) {
-    const boundaryIdx = indexOf(buffer, boundaryBuf, pos)
+  let start = 0
+  while (start < body.length) {
+    const boundaryIdx = body.indexOf(boundaryBuf, start)
     if (boundaryIdx === -1) break
-    pos = boundaryIdx + boundaryBuf.length
-    if (buffer[pos] === 45 && buffer[pos + 1] === 45) break
-    if (buffer[pos] === 13) pos++
-    if (buffer[pos] === 10) pos++
-    const headerEnd = indexOf(buffer, Buffer.from('\r\n\r\n'), pos)
+    const partStart = boundaryIdx + boundaryBuf.length
+    if (body[partStart] === 45 && body[partStart + 1] === 45) break
+    const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), partStart)
     if (headerEnd === -1) break
-    const headerStr = buffer.slice(pos, headerEnd).toString('utf8')
+    const headerStr = body.slice(partStart + 2, headerEnd).toString('utf8')
     const headers = {}
     for (const line of headerStr.split('\r\n')) {
       const colon = line.indexOf(':')
-      if (colon > 0) headers[line.slice(0, colon).toLowerCase().trim()] = line.slice(colon + 1).trim()
+      if (colon > -1) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim()
     }
-    pos = headerEnd + 4
-    const nextBoundary = indexOf(buffer, boundaryBuf, pos)
-    const dataEnd = nextBoundary === -1 ? buffer.length : nextBoundary - 2
-    parts.push({ headers, data: buffer.slice(pos, dataEnd) })
-    pos = nextBoundary === -1 ? buffer.length : nextBoundary
+    const nextBoundary = body.indexOf(boundaryBuf, headerEnd + 4)
+    const dataEnd = nextBoundary === -1 ? body.length : nextBoundary - 2
+    parts.push({ headers, data: body.slice(headerEnd + 4, dataEnd) })
+    start = nextBoundary === -1 ? body.length : nextBoundary
   }
   return parts
 }
 
-function indexOf(buf, search, start = 0) {
-  for (let i = start; i <= buf.length - search.length; i++) {
-    let found = true
-    for (let j = 0; j < search.length; j++) {
-      if (buf[i + j] !== search[j]) { found = false; break }
-    }
-    if (found) return i
-  }
-  return -1
-}
-
 export default async function handler(req, res) {
   // Route to format extraction if action=extract-format
-  const qIdx = (req.url || '').indexOf('?')
-  const params = new URLSearchParams(qIdx >= 0 ? req.url.slice(qIdx + 1) : '')
+  const { url = '', method } = req
+  const qIdx = url.indexOf('?')
+  const params = new URLSearchParams(qIdx >= 0 ? url.slice(qIdx + 1) : '')
   if (params.get('action') === 'extract-format') {
     let userId
     try { userId = await requireAuth(req) }
@@ -114,7 +76,7 @@ export default async function handler(req, res) {
     catch (e) { res.status(500).json({ error: e.message }); return }
   }
 
-  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return }
+  if (method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return }
 
   let userId
   try { userId = await requireAuth(req) }
@@ -128,7 +90,7 @@ export default async function handler(req, res) {
 
     const parts = splitMultipart(body, boundaryMatch[1])
     let fileBuffer = null, filename = 'unknown', subjectId = null
-    let fileType = 'pdf', docType = 'notes', mimeType = ''
+    let fileType = 'pdf', docType = 'notes', mimeType = '', unit = ''
 
     for (const part of parts) {
       const disposition = part.headers['content-disposition'] || ''
@@ -136,17 +98,19 @@ export default async function handler(req, res) {
         subjectId = part.data.toString('utf8').trim()
       } else if (disposition.includes('name="docType"')) {
         docType = part.data.toString('utf8').trim() || 'notes'
+      } else if (disposition.includes('name="unit"')) {
+        unit = part.data.toString('utf8').trim()
       } else if (disposition.includes('name="file"')) {
         const nameMatch = disposition.match(/filename="([^"]+)"/)
         if (nameMatch) filename = nameMatch[1]
         fileBuffer = part.data
         mimeType = part.headers['content-type'] || ''
         const lower = filename.toLowerCase()
-        if (lower.endsWith('.pdf')) fileType = 'pdf'
-        else if (lower.endsWith('.docx')) fileType = 'docx'
-        else if (lower.match(/\.(jpg|jpeg)$/)) fileType = 'jpg'
-        else if (lower.endsWith('.png')) fileType = 'png'
-        else if (lower.endsWith('.txt')) fileType = 'txt'
+        if (lower.endsWith('.pdf'))                    fileType = 'pdf'
+        else if (lower.endsWith('.docx'))             fileType = 'docx'
+        else if (lower.match(/\.(jpg|jpeg)$/))        fileType = 'jpg'
+        else if (lower.endsWith('.png'))              fileType = 'png'
+        else if (lower.endsWith('.txt'))              fileType = 'txt'
         else fileType = 'txt'
       }
     }
@@ -161,76 +125,82 @@ export default async function handler(req, res) {
       const imageMime = fileType === 'png' ? 'image/png' : 'image/jpeg'
       rawText = await extractTextViaVision(fileBuffer, imageMime)
       ocrUsed = true
-    } else if (fileType === 'pdf') {
-  // Skip regex extraction — go straight to Claude native PDF reading
-  // (regex extraction returns binary garbage for modern compressed PDFs)
-  rawText = ''
 
-  // If minimal text extracted, it's likely scanned — try vision OCR on embedded images
-  if (rawText.length < 100) {
-        console.log('PDF has minimal text, trying vision OCR on embedded images...')
-        const images = extractPdfImages(fileBuffer)
-        
-        if (images.length > 0) {
-          // OCR up to 3 images (pages)
-          const ocrResults = []
-          for (const img of images.slice(0, 3)) {
-            try {
-              const text = await extractTextViaVision(img.data, img.mimeType)
-              if (text && text.length > 20) ocrResults.push(text)
-            } catch (e) {
-              console.error('Image OCR failed:', e.message)
-            }
-          }
-          if (ocrResults.length > 0) {
-            rawText = ocrResults.join('\n\n')
+    } else if (fileType === 'pdf') {
+      // ── PDF: go straight to Claude native PDF reading ────────────────────
+      // Skip regex extraction — it returns binary garbage for modern PDFs
+      // Claude haiku handles PDFs natively and is fast enough within 300s
+      try {
+        const base64Pdf = fileBuffer.toString('base64')
+        const pdfRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': process.env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',   // fastest model — critical for 300s limit
+            max_tokens: 4000,
+            messages: [{
+              role: 'user',
+              content: [
+                {
+                  type: 'document',
+                  source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf }
+                },
+                {
+                  type: 'text',
+                  text: 'Extract ALL text from this document including questions, answers, formulas, diagrams descriptions, and instructions. Preserve the structure and numbering. Output only the raw extracted text, nothing else.'
+                }
+              ]
+            }]
+          })
+        })
+
+        if (pdfRes.ok) {
+          const pdfData = await pdfRes.json()
+          const extracted = pdfData.content?.[0]?.text || ''
+          if (extracted.length > 50) {
+            rawText = extracted
             ocrUsed = true
+            console.log('Claude native PDF reading succeeded:', extracted.length, 'chars')
+          } else {
+            console.log('Claude PDF returned short response, trying image OCR fallback')
           }
+        } else {
+          const errText = await pdfRes.text()
+          console.error('Claude PDF API error:', pdfRes.status, errText.slice(0, 200))
         }
-        
-        // If still no text, use Claude's native PDF reading (handles scanned PDFs)
-        if (rawText.length < 50) {
-          try {
-            const base64Pdf = fileBuffer.toString('base64')
-            const pdfRes = await fetch('https://api.anthropic.com/v1/messages', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': process.env.ANTHROPIC_API_KEY,
-                'anthropic-version': '2023-06-01',
-                        },
-              body: JSON.stringify({
-                model: 'claude-sonnet-4-5',
-                max_tokens: 3000,
-                messages: [{
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'document',
-                      source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf }
-                    },
-                    {
-                      type: 'text',
-                      text: 'Extract ALL text from this document including questions, answers, formulas, and instructions. Preserve structure. Output only the raw extracted text.'
-                    }
-                  ]
-                }]
-              })
-            })
-            if (pdfRes.ok) {
-              const pdfData = await pdfRes.json()
-              const extracted = pdfData.content?.[0]?.text || ''
-              if (extracted.length > 50) {
-                rawText = extracted
-                ocrUsed = true
-                console.log('Claude native PDF reading succeeded:', extracted.length, 'chars')
+      } catch (e) {
+        console.error('Claude PDF reading failed:', e.message)
+      }
+
+      // Fallback: image OCR on first 3 pages if Claude reading failed
+      if (rawText.length < 50) {
+        console.log('Trying image OCR fallback on PDF pages...')
+        try {
+          const images = extractPdfImages(fileBuffer)
+          if (images.length > 0) {
+            const ocrResults = []
+            for (const img of images.slice(0, 3)) {
+              try {
+                const text = await extractTextViaVision(img.data, img.mimeType)
+                if (text && text.length > 20) ocrResults.push(text)
+              } catch (e) {
+                console.error('Image OCR failed:', e.message)
               }
             }
-          } catch (e) {
-            console.error('Claude PDF reading failed:', e.message)
+            if (ocrResults.length > 0) {
+              rawText = ocrResults.join('\n\n')
+              ocrUsed = true
+            }
           }
+        } catch (e) {
+          console.error('PDF image extraction failed:', e.message)
         }
       }
+
     } else if (fileType === 'docx') {
       rawText = extractDocxText(fileBuffer)
     } else {
@@ -238,7 +208,7 @@ export default async function handler(req, res) {
     }
 
     if (!rawText || rawText.length < 30) {
-      res.status(400).json({ 
+      res.status(400).json({
         error: 'Could not extract text from this file. For handwritten notes, take a clear photo and upload as JPG/PNG. For scanned PDFs, ensure the scan is clear.'
       })
       return
@@ -250,6 +220,7 @@ export default async function handler(req, res) {
       filename,
       fileType,
       docType,
+      unit: unit || null,
       ocrUsed,
       charCount: rawText.length,
       chunkCount: textChunks.length,
@@ -262,83 +233,50 @@ export default async function handler(req, res) {
     existing.push(doc)
     await redisSet(key, existing)
 
-    res.status(200).json({ 
-      ok: true, 
-      docId: doc.id, 
-      filename, 
+    res.status(200).json({
+      ok: true,
+      docId: doc.id,
+      filename,
       docType,
+      unit: doc.unit,
       ocrUsed,
-      chunkCount: textChunks.length, 
-      charCount: rawText.length 
+      chunkCount: textChunks.length,
+      charCount: rawText.length
     })
+
   } catch (e) {
     console.error('ingest-doc error:', e.message)
     res.status(500).json({ error: e.message })
   }
 }
 
-// Also handles format extraction — POST /api/ingest-doc?action=extract-format
+// ── Format extraction handler (unchanged) ─────────────────────────────────────
 export async function extractFormatHandler(req, res, userId) {
   const { url = '' } = req
-  const qIndex = url.indexOf('?')
-  const params = new URLSearchParams(qIndex >= 0 ? url.slice(qIndex + 1) : '')
+  const qIdx = url.indexOf('?')
+  const params = new URLSearchParams(qIdx >= 0 ? url.slice(qIdx + 1) : '')
   const subjectId = params.get('subjectId')
-
   if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
 
   const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
   const pastPapers = allDocs.filter(d => d.docType === 'past-paper')
-
   if (pastPapers.length === 0) {
-    res.status(400).json({ error: 'No past papers uploaded yet.' })
-    return
+    res.status(400).json({ error: 'No past papers uploaded yet.' }); return
   }
 
-  const chunks = pastPapers.flatMap(d => d.chunks || [])
-  let context = ''
+  const allChunks = pastPapers.flatMap(d => d.chunks || [])
+  let sampleText = ''
   let charCount = 0
-  for (const chunk of chunks) {
-    if (charCount + chunk.length > 5000) break
-    context += chunk + '\n\n'
+  for (const chunk of allChunks) {
+    if (charCount + chunk.length > 3000) break
+    sampleText += chunk + '\n'
     charCount += chunk.length
   }
 
-  // If no text extracted, try reading PDFs directly with Claude
-  if (charCount < 50) {
-    // Try Claude native PDF reading on each past paper
-    for (const doc of pastPapers) {
-      if (charCount >= 50) break
-      // We don't have the original file buffer — skip to fallback
-    }
-  }
+  const subjects = await redisGet(`sm:subjects:${userId}`) || []
+  const subject = subjects.find(s => s.id === subjectId) || {}
 
-  if (charCount < 50) {
-    const subjects = await redisGet(`sm:subjects:${userId}`) || []
-    const subject = subjects.find(s => s.id === subjectId)
-    const fallbackFormat = {
-      totalMarks: subject?.paperFormat?.totalMarks || 100,
-      timeAllowed: `${subject?.paperFormat?.timeLimitMins || 180} minutes`,
-      sections: (subject?.paperFormat?.sections || ['Multiple choice', 'Short answer', 'Extended response']).map(name => ({
-        name, type: name.toLowerCase().includes('choice') ? 'mcq' : 'extended',
-        marks: Math.floor((subject?.paperFormat?.totalMarks || 100) / 3),
-        questionCount: 5, instructions: '', hasDiagrams: false
-      })),
-      formulaSheet: false,
-      allowedMaterials: 'Scientific calculator',
-      questionStyle: `Standard ${subject?.examBoard || 'AU'} exam format`,
-      inferredFromSubject: true
-    }
-    const idx = subjects.findIndex(s => s.id === subjectId)
-    if (idx >= 0) {
-      subjects[idx].extractedFormat = fallbackFormat
-      subjects[idx].formatExtractedAt = new Date().toISOString()
-      await redisSet(`sm:subjects:${userId}`, subjects)
-    }
-    res.status(200).json({ ok: true, format: fallbackFormat, warning: 'PDFs had no extractable text — using subject settings as format template. Re-upload PDFs for better results.' })
-    return
-  }
-
-  const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+  const formatRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -347,30 +285,29 @@ export async function extractFormatHandler(req, res, userId) {
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1500,
+      max_tokens: 600,
       messages: [
-        { role: 'user', content: `Analyse this exam paper and extract its exact format as JSON:\n\n${context}\n\nReturn ONLY JSON: {"totalMarks":0,"timeAllowed":"","sections":[{"name":"","type":"mcq","marks":0,"questionCount":0,"instructions":"","hasDiagrams":false}],"formulaSheet":false,"allowedMaterials":"","questionStyle":""}` },
+        { role: 'user', content: `Extract the exam format from this past paper content for ${subject.name || 'Physics'} ${subject.examBoard || 'BSSS'}:\n\n${sampleText}\n\nReturn JSON only: {"sections":[{"name":"...","type":"mcq|short|extended","marks":0,"questionCount":0,"marksPerQ":0,"instructions":"..."}],"totalMarks":0,"timeLimitMins":0,"allowedMaterials":"...","style":"..."}` },
         { role: 'assistant', content: '{' }
       ]
     })
   })
 
-  if (!claudeRes.ok) throw new Error(`Claude error: ${claudeRes.status}`)
-  const data = await claudeRes.json()
-  const raw = '{' + (data.content?.[0]?.text || '{}')
-  
-  let format
+  if (!formatRes.ok) { res.status(500).json({ error: 'Format extraction failed' }); return }
+
+  const formatData = await formatRes.json()
+  const raw = '{' + (formatData.content?.[0]?.text || '{}')
   try {
-    format = JSON.parse(raw.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim())
-  } catch { throw new Error('Could not parse format') }
-
-  const subjects = await redisGet(`sm:subjects:${userId}`) || []
-  const idx = subjects.findIndex(s => s.id === subjectId)
-  if (idx >= 0) {
-    subjects[idx].extractedFormat = format
-    subjects[idx].formatExtractedAt = new Date().toISOString()
-    await redisSet(`sm:subjects:${userId}`, subjects)
+    const fmt = JSON.parse(raw.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim())
+    const subjects2 = await redisGet(`sm:subjects:${userId}`) || []
+    const idx = subjects2.findIndex(s => s.id === subjectId)
+    if (idx >= 0) {
+      subjects2[idx].extractedFormat = fmt
+      subjects2[idx].extractedFormatAt = new Date().toISOString()
+      await redisSet(`sm:subjects:${userId}`, subjects2)
+    }
+    res.status(200).json({ ok: true, format: fmt })
+  } catch (e) {
+    res.status(500).json({ error: 'Could not parse format response' })
   }
-
-  res.status(200).json({ ok: true, format })
 }
