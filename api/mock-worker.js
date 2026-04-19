@@ -14,16 +14,43 @@ function genId() {
 }
 
 function extractJson(text) {
+  // Try direct parse
   try { return JSON.parse(text.trim()) } catch {}
+  // Strip markdown
   const stripped = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim()
   try { return JSON.parse(stripped) } catch {}
+  // Find outermost braces
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
   if (start !== -1 && end !== -1 && end > start) {
     try {
-      const fixed = text.slice(start, end + 1).replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')
+      const fixed = text.slice(start, end + 1)
+        .replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')
       return JSON.parse(fixed)
     } catch {}
+  }
+  // Handle truncated JSON — find last complete section and close it
+  if (start !== -1) {
+    let partial = text.slice(start)
+    // Try closing at last complete question object
+    const lastQ = partial.lastIndexOf('"topic"')
+    if (lastQ > 0) {
+      // Find the closing brace of that question
+      let depth = 0, closeAt = -1
+      for (let i = lastQ; i < partial.length; i++) {
+        if (partial[i] === '{') depth++
+        if (partial[i] === '}') { depth--; if (depth <= 0) { closeAt = i; break } }
+      }
+      if (closeAt > 0) {
+        // Close questions array, section, sections array, root object
+        const truncated = partial.slice(0, closeAt + 1) + ']}]}' 
+        try {
+          const fixed = truncated.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')
+          const parsed = JSON.parse(fixed)
+          if (parsed.sections) { parsed._truncated = true; return parsed }
+        } catch {}
+      }
+    }
   }
   throw new Error('Could not extract JSON from response')
 }
@@ -176,13 +203,13 @@ TOPICS TO COVER: ${topicsList}
 ${sectionInstructions}
 
 CRITICAL REQUIREMENTS:
-1. Match EXACTLY the format above — correct number of questions per section, correct marks
+1. Match the format above — correct section structure and mark allocations
 2. For MCQ: exactly 1 mark each, 4 options (A/B/C/D), one clearly correct answer
-3. For short/extended: multi-part questions (a, b, c...) with marks per part shown in brackets [X marks]
-4. Include realistic physics/science context: formulas, values, units, scientific notation
-5. For any question requiring a diagram: write [DIAGRAM: clear description of what the diagram shows] — describe circuits, graphs, force diagrams etc in detail
-6. Questions must be exam-ready difficulty — Year ${yearLevel} ${examBoard} standard
-7. Extended response questions should be complex multi-step problems
+3. For short answer: 2 questions with parts (a)(b)(c), marks per part in brackets
+4. For extended response: 1 complex multi-step problem, 20+ marks
+5. Include physics formulas, SI units, scientific notation where appropriate
+6. For diagrams write [DIAGRAM: description] inline
+7. Keep questions concise but rigorous — exam-ready for Year ${yearLevel} ${examBoard}
 
 Return ONLY valid JSON — no markdown, no explanation:
 {
@@ -229,7 +256,7 @@ Return ONLY valid JSON — no markdown, no explanation:
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 8000,
+        max_tokens: 8192,
         messages: [
           { role: 'user', content: prompt },
           { role: 'assistant', content: '{' }
