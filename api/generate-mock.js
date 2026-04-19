@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   catch (e) { res.status(401).json({ error: 'Unauthorized' }); return }
 
   try {
-    const { subjectId, customInstructions = '', forceNew = false, replaceSlot = null } = await parseBody(req)
+    const { subjectId, customInstructions = '', forceNew = false, replaceSlot = null, confirmedScope = null } = await parseBody(req)
     if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
 
     const subjects = await redisGet(`sm:subjects:${userId}`) || []
