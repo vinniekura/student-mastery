@@ -9,12 +9,114 @@ const SOURCE_LABELS = {
 }
 
 const STATUS_CONFIG = {
-  queued: { label: 'Queued', sublabel: 'Starting soon...', color: '#d97706', spin: false, pulse: true },
-  generating: { label: 'Generating', sublabel: 'Writing your paper...', color: 'var(--teal2)', spin: true, pulse: false },
-  failed: { label: 'Failed', sublabel: 'Tap to retry', color: 'var(--red)', spin: false, pulse: false },
+  queued:     { label: 'Queued',      sublabel: 'Starting soon...',      color: '#d97706', spin: false, pulse: true  },
+  generating: { label: 'Generating',  sublabel: 'Writing your paper...', color: 'var(--teal2)', spin: true,  pulse: false },
+  failed:     { label: 'Failed',      sublabel: 'Tap to retry',          color: 'var(--red)', spin: false, pulse: false },
   ready: null
 }
 
+// ─── Diagram renderer ─────────────────────────────────────────────────────────
+// Handles three formats that may come from the AI:
+//   1. [SVG:<svg ...>...</svg>]          — preferred, real SVG
+//   2. [DIAGRAM: description text]       — text fallback (old format)
+//   3. **Diagram:** description text     — bold prose fallback (claude slip)
+function renderQuestionText(text) {
+  if (!text) return null
+  const parts = []
+  let remaining = text
+
+  while (remaining.length > 0) {
+
+    // ── Format 1: [SVG:...] ──
+    const svgStart = remaining.indexOf('[SVG:')
+    // ── Format 2: [DIAGRAM:...] ──
+    const diagStart = remaining.indexOf('[DIAGRAM:')
+    // ── Format 3: **Diagram:** ... (bold prose, grab to end of paragraph) ──
+    const boldDiagMatch = remaining.match(/\*\*Diagram:\*\*\s*([^\n]+)/)
+
+    // Find which comes first
+    const candidates = [
+      svgStart >= 0    ? { type: 'svg',  pos: svgStart }    : null,
+      diagStart >= 0   ? { type: 'diag', pos: diagStart }   : null,
+      boldDiagMatch    ? { type: 'bold', pos: boldDiagMatch.index } : null,
+    ].filter(Boolean)
+
+    if (candidates.length === 0) {
+      // No more markers — push remaining text
+      parts.push(<span key={parts.length}>{remaining}</span>)
+      break
+    }
+
+    // Sort by position, handle earliest first
+    candidates.sort((a, b) => a.pos - b.pos)
+    const first = candidates[0]
+
+    // Push any text before this marker
+    if (first.pos > 0) {
+      parts.push(<span key={parts.length}>{remaining.slice(0, first.pos)}</span>)
+    }
+
+    if (first.type === 'svg') {
+      // Find closing ]
+      const svgEnd = remaining.indexOf(']', svgStart + 5)
+      if (svgEnd === -1) {
+        parts.push(<span key={parts.length}>{remaining}</span>)
+        break
+      }
+      const svgCode = remaining.slice(svgStart + 5, svgEnd)
+      parts.push(
+        <div key={parts.length} style={{
+          margin: '12px 0', padding: '16px',
+          background: 'white', borderRadius: 8,
+          border: '1px solid var(--border)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          overflowX: 'auto'
+        }}>
+          <div dangerouslySetInnerHTML={{ __html: svgCode }} />
+        </div>
+      )
+      remaining = remaining.slice(svgEnd + 1)
+
+    } else if (first.type === 'diag') {
+      // Find closing ]
+      const dEnd = remaining.indexOf(']', diagStart + 9)
+      if (dEnd === -1) { parts.push(<span key={parts.length}>{remaining}</span>); break }
+      const desc = remaining.slice(diagStart + 9, dEnd).trim()
+      parts.push(<DiagramPlaceholder key={parts.length} desc={desc} />)
+      remaining = remaining.slice(dEnd + 1)
+
+    } else if (first.type === 'bold') {
+      const desc = boldDiagMatch[1].trim()
+      parts.push(<DiagramPlaceholder key={parts.length} desc={desc} />)
+      // Skip past the bold match
+      remaining = remaining.slice(boldDiagMatch.index + boldDiagMatch[0].length)
+    }
+  }
+
+  return parts.length > 0 ? parts : text
+}
+
+// Styled placeholder for text-described diagrams
+function DiagramPlaceholder({ desc }) {
+  return (
+    <div style={{
+      margin: '10px 0', padding: '12px 16px',
+      background: 'var(--bg3)', border: '1px dashed var(--border2)',
+      borderRadius: 8, fontSize: 12, color: 'var(--text2)',
+      fontStyle: 'italic', display: 'flex', gap: 8, alignItems: 'flex-start'
+    }}>
+      <span style={{ fontSize: 16 }}>📐</span>
+      <div>
+        <strong style={{ fontStyle: 'normal', color: 'var(--text)', display: 'block', marginBottom: 2 }}>
+          Diagram:
+        </strong>
+        {desc}
+      </div>
+    </div>
+  )
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 export default function MockPaper() {
   const { getToken } = useAuth()
   const { subjects, fetchSubjects } = useSubjectsStore()
@@ -60,10 +162,6 @@ export default function MockPaper() {
     }
     return () => clearInterval(pollRef.current)
   }, [subjectPapers, selectedSubjectId])
-
-  const selectedSubject = subjects.find(s => s.id === selectedSubjectId)
-  const readyPapers = subjectPapers.filter(p => p.status === 'ready')
-  const pendingPapers = subjectPapers.filter(p => p.status === 'queued' || p.status === 'generating')
 
   async function loadSubjectPapers() {
     setLoadingPapers(true)
@@ -116,54 +214,15 @@ export default function MockPaper() {
 
   const sel = { width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', appearance: 'none' }
 
-  function renderQuestion(text) {
-    if (!text) return null
-    const parts = []
-    let remaining = text
-
-    // Handle SVG diagrams [SVG:...]
-    while (remaining.includes('[SVG:')) {
-      const svgStart = remaining.indexOf('[SVG:')
-      const svgEnd = remaining.indexOf(']', svgStart + 5)
-      if (svgEnd === -1) break
-      if (svgStart > 0) parts.push(<span key={parts.length}>{remaining.slice(0, svgStart)}</span>)
-      const svgCode = remaining.slice(svgStart + 5, svgEnd)
-      parts.push(
-        <div key={parts.length} style={{ margin: '12px 0', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, display: 'flex', justifyContent: 'center' }}
-          dangerouslySetInnerHTML={{ __html: svgCode }} />
-      )
-      remaining = remaining.slice(svgEnd + 1)
-    }
-
-    // Handle text diagrams [DIAGRAM:...]
-    while (remaining.includes('[DIAGRAM:')) {
-      const dStart = remaining.indexOf('[DIAGRAM:')
-      const dEnd = remaining.indexOf(']', dStart)
-      if (dEnd === -1) break
-      if (dStart > 0) parts.push(<span key={parts.length}>{remaining.slice(0, dStart)}</span>)
-      const desc = remaining.slice(dStart + 9, dEnd)
-      parts.push(
-        <div key={parts.length} style={{ margin: '10px 0', padding: '12px 16px', background: 'var(--bg3)', border: '1px dashed var(--border2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', fontStyle: 'italic', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-          <span style={{ fontSize: 16 }}>📐</span>
-          <span><strong>Diagram:</strong> {desc}</span>
-        </div>
-      )
-      remaining = remaining.slice(dEnd + 1)
-    }
-
-    if (remaining) parts.push(<span key={parts.length}>{remaining}</span>)
-    return parts.length > 0 ? parts : text
-  }
-
-  // Paper viewer
+  // ── Paper viewer ────────────────────────────────────────────────────────────
   if (viewingPaper) {
     const { paper, sourceType, slotNumber, topicsCovered, completedAt } = viewingPaper
     const src = SOURCE_LABELS[sourceType] || SOURCE_LABELS.syllabus
     return (
       <div style={{ maxWidth: 900 }}>
         <style>{`@media print{.no-print{display:none!important}}`}</style>
-        <div className="no-print" style={{ display: 'flex', gap: 10, marginBottom: 24, alignItems: 'center' }}>
-          <button onClick={() => { setViewingPaper(null); setShowAnswers({}) }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 24, alignItems: 'center' }}>
+          <button onClick={() => setViewingPaper(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
             <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 20, background: src.bg, color: src.color, border: `1px solid ${src.border}` }}>{src.label}</span>
             {topicsCovered?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text3)' }}>{topicsCovered.slice(0, 5).join(' · ')}{topicsCovered.length > 5 ? ` +${topicsCovered.length - 5}` : ''}</span>}
@@ -179,10 +238,10 @@ export default function MockPaper() {
             <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px', marginBottom: 4 }}>
               {paper.coverPage?.school || 'Student Mastery'}
             </div>
-            <div style={{ width: 60, height: 3, background: 'var(--teal)', margin: '10px auto', borderRadius: 2 }} />
-            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)', marginTop: 10 }}>{paper.subject} — Year {paper.yearLevel}</div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>{paper.examBoard} Mock Examination — Paper {viewingPaper.slotNumber}</div>
           </div>
+          <div style={{ width: 60, height: 3, background: 'var(--teal)', margin: '10px auto', borderRadius: 2 }} />
+          <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)', marginTop: 10 }}>{paper.subject} — Year {paper.yearLevel}</div>
+          <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>{paper.examBoard} Mock Examination — Paper {viewingPaper.slotNumber}</div>
 
           {/* Exam info grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
@@ -191,8 +250,8 @@ export default function MockPaper() {
               { label: 'Time allowed', value: paper.timeAllowed },
               { label: 'Permitted materials', value: paper.allowedMaterials || 'Scientific calculator, ruler' }
             ].map(({ label, value }) => (
-              <div key={label} style={{ background: 'var(--bg3)', borderRadius: 8, padding: '12px 14px', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>{label}</div>
+              <div key={label} style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 14px', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{value}</div>
               </div>
             ))}
@@ -256,16 +315,18 @@ export default function MockPaper() {
                     {q.number}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.8, marginBottom: 12 }}>
-                      {renderQuestion(q.question)}
+                    {/* Question text with diagram rendering */}
+                    <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
+                      {renderQuestionText(q.question)}
                     </div>
 
-                    {/* Multi-part questions */}
-                    {q.parts?.map((part, pIdx) => (
+                    {/* Parts */}
+                    {q.parts && q.parts.map((part, pIdx) => (
                       <div key={pIdx} style={{ marginLeft: 16, marginBottom: 12 }}>
                         <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
-                          <strong>({String.fromCharCode(97+pIdx)})</strong> {part.question}
-                          <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>[{part.marks} mark{part.marks !== 1 ? 's' : ''}]</span>
+                          <strong>{String.fromCharCode(97 + pIdx)})</strong>{' '}
+                          {renderQuestionText(part.question)}
+                          <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>[{part.marks} {part.marks !== 1 ? 's' : ''}]</span>
                         </div>
                         <div style={{ border: '1px solid var(--border)', borderRadius: 6, height: part.marks > 2 ? 80 : 44, background: 'var(--bg3)', marginBottom: 4 }} />
                       </div>
@@ -285,6 +346,7 @@ export default function MockPaper() {
                       <div style={{ border: '1px solid var(--border)', borderRadius: 8, height: q.type === 'extended' ? 120 : 60, background: 'var(--bg3)', marginBottom: 8 }} />
                     )}
 
+                    {/* Footer: marks + topic + show answer */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <span style={{ fontSize: 11, color: 'var(--text3)', background: 'var(--bg3)', padding: '2px 10px', borderRadius: 10, border: '1px solid var(--border)' }}>
@@ -297,6 +359,7 @@ export default function MockPaper() {
                       </button>
                     </div>
 
+                    {/* Answer reveal */}
                     {showAnswers[`${sIdx}-${qIdx}`] && (
                       <div style={{ marginTop: 10, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', borderRadius: 10, padding: '14px 18px' }}>
                         {q.answer && <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--teal2)', marginBottom: 6 }}>Answer: {q.answer}</div>}
@@ -318,16 +381,19 @@ export default function MockPaper() {
     )
   }
 
+  // ── Paper list view ─────────────────────────────────────────────────────────
+  const readyPapers   = subjectPapers.filter(p => p.status === 'ready')
+  const pendingPapers = subjectPapers.filter(p => p.status === 'queued' || p.status === 'generating')
+  const selectedSubject = subjects.find(s => s.id === selectedSubjectId)
+
   return (
     <div style={{ maxWidth: 900 }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}`}</style>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)' }}>Mock paper generator</h1>
-        <p style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>
-          Full exam papers matching your board's format · Papers generate in the background · Up to 5 papers per subject
-        </p>
       </div>
 
+      {/* Subject selector + custom instructions */}
       <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, marginBottom: 20 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'end' }}>
           <div>
@@ -352,6 +418,7 @@ export default function MockPaper() {
 
       {selectedSubjectId && (
         <>
+          {/* Pending banner */}
           {pendingPapers.length > 0 && (
             <div style={{ background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.3)', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: '#d97706', marginBottom: 4 }}>
@@ -363,21 +430,23 @@ export default function MockPaper() {
             </div>
           )}
 
+          {/* Paper count */}
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               Mock papers — {readyPapers.length}/5 ready
               {pendingPapers.length > 0 && <span style={{ color: '#d97706', marginLeft: 8 }}>· {pendingPapers.length} generating</span>}
             </div>
 
+            {/* 5-slot grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
               {[1,2,3,4,5].map(slot => {
                 const paper = subjectPapers.find(p => p.slotNumber === slot)
-                const isEmpty = !paper
-                const status = paper?.status
-                const statusCfg = status ? STATUS_CONFIG[status] : null
-                const isReady = status === 'ready'
-                const isPending = status === 'queued' || status === 'generating'
-                const isFailed = status === 'failed'
+                const isEmpty    = !paper
+                const status     = paper?.status
+                const statusCfg  = status ? STATUS_CONFIG[status] : null
+                const isReady    = status === 'ready'
+                const isPending  = status === 'queued' || status === 'generating'
+                const isFailed   = status === 'failed'
 
                 return (
                   <div key={slot} style={{
@@ -389,16 +458,14 @@ export default function MockPaper() {
                       <span style={{ fontSize: 11, fontWeight: 600, color: isPending ? '#d97706' : isEmpty ? 'var(--text3)' : 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         Mock {slot}
                       </span>
-                      {isReady && <button onClick={() => deletePaper(paper.id)} disabled={deletingId === paper.id} style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer', fontSize: 16, padding: 0 }}>×</button>}
                     </div>
 
                     {isEmpty && (
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>Empty slot</div>
-                        {!submitting && readyPapers.length + pendingPapers.length === slot - 1 && (
-                          <button onClick={() => generate()} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>+ Generate</button>
-                        )}
-                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>Empty slot</div>
+                    )}
+
+                    {isEmpty && !submitting && readyPapers.length + pendingPapers.length === slot - 1 && (
+                      <button onClick={() => generate()} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>+ Generate</button>
                     )}
 
                     {isPending && statusCfg && (
@@ -433,7 +500,7 @@ export default function MockPaper() {
                         )}
                         {(() => { const s = SOURCE_LABELS[paper.sourceType] || SOURCE_LABELS.syllabus; return <div style={{ fontSize: 10, padding: '2px 7px', borderRadius: 10, display: 'inline-block', alignSelf: 'flex-start', background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>{s.label}</div> })()}
                         <div style={{ display: 'flex', gap: 5, marginTop: 'auto' }}>
-                          <button onClick={() => setViewingPaper({ ...paper, subjectName: selectedSubject?.name })} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer', fontWeight: 600 }}>View</button>
+                          <button onClick={() => setViewingPaper({ ...paper, subjectName: selectedSubject?.name })} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>View</button>
                           <button onClick={() => setConfirmReplace(slot)} disabled={submitting} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text2)', cursor: 'pointer' }}>Redo</button>
                         </div>
                       </>
@@ -444,6 +511,7 @@ export default function MockPaper() {
             </div>
           </div>
 
+          {/* Confirm replace dialog */}
           {confirmReplace !== null && (
             <div style={{ background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.3)', borderRadius: 10, padding: '14px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 13, color: '#d97706' }}>Replace Mock {confirmReplace}? A new paper will be generated in the background.</div>
@@ -456,6 +524,7 @@ export default function MockPaper() {
 
           {error && <div style={{ fontSize: 12, color: 'var(--red)', padding: '8px 12px', background: 'var(--red-bg)', borderRadius: 8, marginBottom: 12 }}>{error}</div>}
 
+          {/* Generate button — only shown when < 5 slots filled and not exhausted */}
           {readyPapers.length + pendingPapers.length < 5 && !slotsExhausted && (
             <button onClick={() => generate()} disabled={submitting}
               style={{
@@ -466,18 +535,19 @@ export default function MockPaper() {
                 display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16
               }}>
               {submitting ? (
-                <><span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--text2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />Queuing...</>
+                <><svg style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--text2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />Queuing...</>
               ) : `Generate Mock ${readyPapers.length + pendingPapers.length + 1}`}
             </button>
           )}
 
           {(slotsExhausted || readyPapers.length + pendingPapers.length >= 5) && (
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', marginBottom: 4 }}>All 5 papers generated</div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>All 5 papers generated</div>
               <div style={{ fontSize: 12, color: 'var(--text3)' }}>Use <strong>Redo</strong> to regenerate any slot — paper memory ensures fresh questions.</div>
             </div>
           )}
 
+          {/* Topics covered summary */}
           {readyPapers.length > 0 && (
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
               <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text)', marginBottom: 10 }}>Topics covered across all papers</div>
