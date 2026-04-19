@@ -33,6 +33,38 @@ function extractJson(text) {
   throw new Error('Could not extract JSON from response')
 }
 
+// Known AU curriculum exam formats
+const AU_EXAM_FORMATS = {
+  'BSSS': {
+    sections: [
+      { name: 'Section A: Multiple Choice', type: 'mcq', marks: 20, questionCount: 20, marksPerQ: 1, instructions: 'Choose the best answer for each question. Each question is worth 1 mark.' },
+      { name: 'Section B: Short Answer', type: 'short', marks: 40, questionCount: 4, instructions: 'Answer ALL questions. Show all working clearly.' },
+      { name: 'Section C: Extended Response', type: 'extended', marks: 40, questionCount: 2, instructions: 'Answer ALL questions. Show all working clearly. Marks are awarded for correct working.' }
+    ],
+    totalMarks: 100,
+    timeLimitMins: 180,
+    style: 'BSSS ACT Australia. Section A is 1 mark per MCQ. Include mathematical formulas, scientific notation, diagrams described in text. Use SI units. Questions test understanding not just recall.'
+  },
+  'NESA': {
+    sections: [
+      { name: 'Section I: Multiple Choice', type: 'mcq', marks: 20, questionCount: 20, marksPerQ: 1, instructions: 'Select the alternative A, B, C or D that best answers the question.' },
+      { name: 'Section II: Short Answer', type: 'short', marks: 80, questionCount: 6, instructions: 'Answer the questions in the spaces provided.' }
+    ],
+    totalMarks: 100,
+    timeLimitMins: 180,
+    style: 'NSW HSC NESA exam style. Rigorous questions matching HSC difficulty.'
+  },
+  'VCAA': {
+    sections: [
+      { name: 'Section A: Multiple Choice', type: 'mcq', marks: 20, questionCount: 20, marksPerQ: 1, instructions: 'Choose the response that is correct or best answers the question.' },
+      { name: 'Section B: Short Answer', type: 'short', marks: 60, questionCount: 6, instructions: 'Answer all questions in the spaces provided.' }
+    ],
+    totalMarks: 80,
+    timeLimitMins: 150,
+    style: 'VCE VCAA exam style. Questions reference data booklet values.'
+  }
+}
+
 const EXAM_PRESETS = {
   UCAT: {
     name: 'UCAT', fullName: 'University Clinical Aptitude Test',
@@ -192,15 +224,18 @@ Return ONLY valid JSON with this structure:
         ? paperFormat.sections
         : ['Multiple choice', 'Short answer', 'Extended response']
       const marksPerSection = Math.floor(totalMarks / sections.length)
-      const formatInstructions = useExtractedFormat ? `
-EXACT EXAM FORMAT (extracted from real past paper — follow this precisely):
-- Total marks: ${extractedFormat.totalMarks}
-- Time: ${extractedFormat.timeAllowed}
-- Formula sheet: ${extractedFormat.formulaSheet ? 'YES' : 'NO'}
-- Allowed materials: ${extractedFormat.allowedMaterials || 'Standard'}
-- Question style: ${extractedFormat.questionStyle || 'Match past paper'}
-SECTIONS:
-${(extractedFormat.sections || []).map((s, i) => `Section ${i+1}: ${s.name} — ${s.questionCount} questions, ${s.marks} marks. ${s.instructions}. ${s.hasDiagrams ? 'Include diagram descriptions.' : ''}`).join('\n')}
+      // Use AU curriculum format if known board, extracted format, or fall back to paperFormat
+    const auFormat = AU_EXAM_FORMATS[examBoard?.toUpperCase()]
+    const effectiveFormat = auFormat || (useExtractedFormat ? extractedFormat : null)
+
+    const formatInstructions = effectiveFormat ? `
+FOLLOW THIS EXACT EXAM FORMAT:
+- Total marks: ${effectiveFormat.totalMarks || totalMarks}
+- Time allowed: ${effectiveFormat.timeAllowed || effectiveFormat.timeLimitMins + ' minutes' || timeLimitMins + ' minutes'}
+- Style: ${effectiveFormat.style || 'Standard AU exam'}
+SECTIONS (generate EXACTLY as specified):
+${((effectiveFormat.sections || [])).map((s, i) => `Section ${i+1}: ${s.name} — ${s.questionCount} questions, ${s.marks} marks total${s.marksPerQ ? ', ' + s.marksPerQ + ' mark each' : ''}. ${s.instructions}`).join('\n')}
+CRITICAL: For MCQ sections use EXACTLY 1 mark per question. Include physics formulas, units, and calculations in questions.
 ` : `Sections: ${sections.join(', ')} — ${marksPerSection} marks each. Total: ${totalMarks} marks, ${timeLimitMins} min.`
 
     prompt = `Create Mock Paper ${paperNumber} for ${examBoard} ${name}, Year ${yearLevel}, ${state}.
