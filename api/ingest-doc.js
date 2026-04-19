@@ -162,11 +162,12 @@ export default async function handler(req, res) {
       rawText = await extractTextViaVision(fileBuffer, imageMime)
       ocrUsed = true
     } else if (fileType === 'pdf') {
-      // Try text extraction first
-      rawText = extractPdfText(fileBuffer)
-      
-      // If minimal text extracted, it's likely scanned — try vision OCR on embedded images
-      if (rawText.length < 100) {
+  // Skip regex extraction — go straight to Claude native PDF reading
+  // (regex extraction returns binary garbage for modern compressed PDFs)
+  rawText = ''
+
+  // If minimal text extracted, it's likely scanned — try vision OCR on embedded images
+  if (rawText.length < 100) {
         console.log('PDF has minimal text, trying vision OCR on embedded images...')
         const images = extractPdfImages(fileBuffer)
         
