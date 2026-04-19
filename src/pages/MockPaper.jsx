@@ -81,7 +81,7 @@ function ScopeCard({ scope, onConfirm, onReanalyse, analysing }) {
       term,
       examType,
       topics: topics.split(',').map(t => t.trim()).filter(Boolean),
-      format: { timeMins: Number(timeMins) || 60, totalMarks: Number(totalMarks) || 100, sections: scope.format?.sections || [] },
+      format: { timeMins: Number(timeMins) || 60, totalMarks: Number(totalMarks) || 100, sections: Array.isArray(scope.format?.sections) ? scope.format.sections : [] },
       curriculum: scope.curriculum,
       confidence: scope.confidence,
       summaryLine: `${term} · ${examType} · ${scope.curriculum || ''}`
@@ -155,7 +155,7 @@ function ScopeCard({ scope, onConfirm, onReanalyse, analysing }) {
         </div>
       </div>
 
-      {scope.format?.sections?.length > 0 && (
+      {scope.format?.sections && Array.isArray(scope.format.sections) && scope.format.sections.length > 0 && (
         <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>
           <strong style={{ color: 'var(--text2)' }}>Detected format:</strong> {scope.format.sections.join(' · ')}
         </div>
