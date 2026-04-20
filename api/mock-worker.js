@@ -175,7 +175,7 @@ export default async function handler(req, res) {
       const allChunks = allDocs.flatMap(d => d.chunks || [])
       let charCount = 0
       for (const chunk of allChunks) {
-        if (charCount + chunk.length > 1500) break
+        if (charCount + chunk.length > 3000) break
         docContext += chunk + '\n'; charCount += chunk.length
       }
       if (charCount > 50) sourceType = allDocs.some(d => d.docType === 'past-paper') ? 'past-paper' : 'docs'
@@ -224,88 +224,13 @@ ${difficultyInstruction}
 
 ${scopeTerm ? `SCOPE: "${scopeTerm}" (${scopeExamType || 'exam'}) — ONLY questions on: ${topicsList}` : ''}
 
-DIAGRAM INSTRUCTIONS — IMPORTANT:
-When a question requires a diagram, you MUST specify it precisely in the "diagrams" array using one of these types:
-- type: "magnetic-field" — for magnetic field regions (crosses × showing field into page, particles with velocity arrows)
-- type: "parallel-plates" — for parallel plate capacitors/electric field setups  
-- type: "solenoid" — for solenoid/coil magnetic field diagrams
-- type: "gravitational-field" — for g vs distance graphs (inverse square curve)
-- type: "free-body" — for force diagrams on objects
-- type: "circuit" — for electrical circuit diagrams
-- type: "wave" — for wave diagrams with wavelength/amplitude
-- type: "graph" — for generic x-y graphs
-- type: "electric-field" — for electric field line diagrams around charges
+DIAGRAMS: Use [DIAGRAM_REF:N] in question text. Add to "diagrams" array: { "id":N, "type":"magnetic-field|parallel-plates|solenoid|gravitational-field|free-body|circuit|wave|electric-field|graph", "description":"...", "params":{...} }
+Params by type — magnetic-field:{"rows":5,"cols":7,"particleCharge":"negative","particleVelocity":"right","fieldDirection":"into-page"} parallel-plates:{"separation":"4cm","voltage":"800V","particleCharge":"negative","topPlatePolarity":"positive"} solenoid:{"turns":8,"length":"0.10m","currentDirection":"left-to-right"} gravitational-field:{"bodyName":"Mars","surfaceG":"3.73"} circuit:{"voltage":"12","r1":"4","r2":"6","r3":"8"}
 
-For each diagram, provide detailed "params" so it can be rendered accurately:
-- magnetic-field: { rows: 5, cols: 7, particleCharge: "positive", particleVelocity: "right", fieldDirection: "into-page" }
-- parallel-plates: { separation: "4.0 cm", voltage: "800 V", particleCharge: "negative", particlePosition: "lower" }
-- solenoid: { turns: 8, length: "0.10 m", currentDirection: "left-to-right" }
-- gravitational-field: { bodyName: "Mars", surfaceRadius: "3.38e6", surfaceG: "3.73", maxRadius: "10e6" }
-- free-body: { object: "block", forces: ["weight down", "normal up", "friction left", "applied right"] }
-- circuit: { voltage: "12", r1: "4", r2: "6", r3: "8", topology: "r1-series-r2r3parallel" }
+QUALITY: Match exact format, marks, numbering. MCQ: 4 plausible options. Parts build on each other. Realistic values. Include all given constants. Marking criteria per mark.
 
-Use [DIAGRAM_REF:N] in question text where N matches the diagram id.
-
-QUALITY REQUIREMENTS:
-1. Match the EXACT format — section names, mark allocations, question numbering
-2. MCQ: 4 options (A/B/C/D), plausible distractors (common mistakes, not obviously wrong)
-3. Multi-part questions: parts build on each other — part (b) uses result from (a)
-4. Values: use realistic numbers (not trivial integers)
-5. All necessary given data in the question (constants, masses, charges)
-6. Marking criteria: specify what earns each mark
-
-Return ONLY valid JSON:
-{
-  "coverPage": {
-    "school": "Narrabundah College",
-    "subject": "${name}",
-    "level": "${levelDescription}",
-    "examType": "${scopeExamType || 'Mock Exam'}",
-    "mockNumber": ${slotNumber},
-    ${scopeTerm ? `"scope": "${scopeTerm}",` : ''}
-    "instructions": ["Write in black or blue pen", "Show all working for full marks", "Scientific calculator permitted", "Phones and electronic devices must be away"]
-  },
-  "diagrams": [
-    {
-      "id": 1,
-      "type": "magnetic-field",
-      "description": "Magnetic field region into page with electron moving right",
-      "params": { "rows": 5, "cols": 7, "particleCharge": "negative", "particleVelocity": "right", "fieldDirection": "into-page" }
-    }
-  ],
-  "title": "${name} — Mock Paper ${slotNumber}${scopeTerm ? ` (${scopeTerm})` : ''}",
-  "subject": "${name}",
-  "levelDescription": "${levelDescription}",
-  "examBoard": "${examBoard || ''}",
-  "scopeTerm": ${scopeTerm ? `"${scopeTerm}"` : 'null'},
-  "scopeExamType": ${scopeExamType ? `"${scopeExamType}"` : 'null'},
-  "difficultyMode": "${difficultyMode}",
-  "totalMarks": ${effectiveTotalMarks},
-  "timeAllowed": "${effectiveTimeMins} minutes",
-  "allowedMaterials": "${effectiveMaterials}",
-  "sections": [
-    {
-      "name": "Section name",
-      "type": "mcq|short|extended",
-      "marks": 20,
-      "instructions": "Section instructions",
-      "questions": [
-        {
-          "number": 1,
-          "question": "Question text. Use [DIAGRAM_REF:1] where diagram appears.",
-          "parts": null,
-          "marks": 1,
-          "type": "mcq",
-          "options": ["A. option", "B. option", "C. option", "D. option"],
-          "answer": "B",
-          "workingOut": "Step-by-step solution with units",
-          "markingCriteria": "Award 1 mark for B",
-          "topic": "Topic name"
-        }
-      ]
-    }
-  ]
-}`
+Return ONLY valid JSON — no markdown, no explanation:
+{"coverPage":{"school":"Narrabundah College","subject":"${name}","level":"${levelDescription}","examType":"${scopeExamType || 'Mock Exam'}","mockNumber":${slotNumber}${scopeTerm ? `,"scope":"${scopeTerm}"` : ''},"instructions":["Write in black or blue pen","Show all working for full marks","Scientific calculator permitted"]},"diagrams":[],"title":"${name} — Mock Paper ${slotNumber}${scopeTerm ? ` (${scopeTerm})` : ''}","subject":"${name}","levelDescription":"${levelDescription}","examBoard":"${examBoard || ''}","scopeTerm":${scopeTerm ? `"${scopeTerm}"` : 'null'},"scopeExamType":${scopeExamType ? `"${scopeExamType}"` : 'null'},"difficultyMode":"${difficultyMode}","totalMarks":${effectiveTotalMarks},"timeAllowed":"${effectiveTimeMins} minutes","allowedMaterials":"${effectiveMaterials}","sections":[{"name":"Section name","type":"mcq","marks":20,"instructions":"Circle the best answer","questions":[{"number":1,"question":"Question text","parts":null,"marks":1,"type":"mcq","options":["A. option","B. option","C. option","D. option"],"answer":"B","workingOut":"Solution","markingCriteria":"1 mark for B","topic":"Topic"}]}]}`
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -316,7 +241,7 @@ Return ONLY valid JSON:
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 8192,
+        max_tokens: 7000,
         messages: [
           { role: 'user', content: prompt },
           { role: 'assistant', content: '{' }
@@ -328,12 +253,12 @@ Return ONLY valid JSON:
       const errText = await claudeRes.text()
       throw new Error(`Claude API error: ${claudeRes.status} ${errText.slice(0, 100)}`)
     }
+
     const claudeData = await claudeRes.json()
     const raw = '{' + (claudeData.content?.[0]?.text || '{}')
-console.log('Claude response length:', raw.length)
-console.log('First 300 chars:', raw.slice(0, 300))
-console.log('Last 200 chars:', raw.slice(-200))
-const paper = extractJson(raw)
+    console.log('Claude response length:', raw.length, '| stop_reason:', claudeData.stop_reason)
+    if (claudeData.stop_reason === 'max_tokens') console.error('TRUNCATED — hit max_tokens, JSON will be incomplete')
+    const paper = extractJson(raw)
     if (!paper.sections || !Array.isArray(paper.sections)) throw new Error('Invalid paper structure')
 
     // Generate SVGs for all diagrams using purpose-built renderers
