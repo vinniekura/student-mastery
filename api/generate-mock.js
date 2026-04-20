@@ -89,7 +89,7 @@ export default async function handler(req, res) {
       headers: {
         'Authorization': `Bearer ${process.env.QSTASH_TOKEN}`,
         'Content-Type': 'application/json',
-        'Upstash-Retries': '0',
+        'Upstash-Retries': '2',
         'Upstash-Delay': '0s'
       },
       body: JSON.stringify({
