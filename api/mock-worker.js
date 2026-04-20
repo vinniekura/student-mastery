@@ -175,7 +175,7 @@ export default async function handler(req, res) {
       const allChunks = allDocs.flatMap(d => d.chunks || [])
       let charCount = 0
       for (const chunk of allChunks) {
-        if (charCount + chunk.length > 3000) break
+        if (charCount + chunk.length > 1500) break
         docContext += chunk + '\n'; charCount += chunk.length
       }
       if (charCount > 50) sourceType = allDocs.some(d => d.docType === 'past-paper') ? 'past-paper' : 'docs'
@@ -328,10 +328,12 @@ Return ONLY valid JSON:
       const errText = await claudeRes.text()
       throw new Error(`Claude API error: ${claudeRes.status} ${errText.slice(0, 100)}`)
     }
-
     const claudeData = await claudeRes.json()
     const raw = '{' + (claudeData.content?.[0]?.text || '{}')
-    const paper = extractJson(raw)
+console.log('Claude response length:', raw.length)
+console.log('First 300 chars:', raw.slice(0, 300))
+console.log('Last 200 chars:', raw.slice(-200))
+const paper = extractJson(raw)
     if (!paper.sections || !Array.isArray(paper.sections)) throw new Error('Invalid paper structure')
 
     // Generate SVGs for all diagrams using purpose-built renderers
