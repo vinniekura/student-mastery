@@ -72,6 +72,7 @@ function ScopeCard({ scope, onConfirm, onReanalyse, analysing }) {
   const [topics, setTopics]         = useState((scope.topics || []).join(', '))
   const [timeMins, setTimeMins]     = useState(scope.format?.timeMins || '')
   const [totalMarks, setTotalMarks] = useState(scope.format?.totalMarks || '')
+  const [difficulty, setDifficulty] = useState('match')
 
   const confidenceColor = scope.confidence === 'high' ? 'var(--teal2)' : scope.confidence === 'medium' ? '#d97706' : 'var(--red)'
   const confidenceBg    = scope.confidence === 'high' ? 'var(--teal-bg)' : scope.confidence === 'medium' ? 'rgba(217,119,6,0.1)' : 'var(--red-bg)'
@@ -84,6 +85,9 @@ function ScopeCard({ scope, onConfirm, onReanalyse, analysing }) {
       format: { timeMins: Number(timeMins) || 60, totalMarks: Number(totalMarks) || 100, sections: Array.isArray(scope.format?.sections) ? scope.format.sections : [] },
       curriculum: scope.curriculum,
       confidence: scope.confidence,
+      difficultyProfile: scope.difficultyProfile || null,
+      difficultyMode: difficulty,
+      levelDescription: scope.levelDescription || '',
       summaryLine: `${term} · ${examType} · ${scope.curriculum || ''}`
     })
   }
@@ -155,11 +159,43 @@ function ScopeCard({ scope, onConfirm, onReanalyse, analysing }) {
         </div>
       </div>
 
-      {scope.format?.sections && Array.isArray(scope.format.sections) && scope.format.sections.length > 0 && (
+      {scope.format?.sections?.length > 0 && Array.isArray(scope.format.sections) && (
         <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>
           <strong style={{ color: 'var(--text2)' }}>Detected format:</strong> {scope.format.sections.join(' · ')}
         </div>
       )}
+
+      {/* Difficulty profile */}
+      {scope.difficultyProfile?.description && (
+        <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Detected difficulty</div>
+          <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 4 }}>{scope.difficultyProfile.description}</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+            Cognitive level: {scope.difficultyProfile.cognitiveLevel} · Steps/problem: {scope.difficultyProfile.stepsPerCalculation} · Marks/question: {scope.difficultyProfile.marksPerQuestion}
+          </div>
+        </div>
+      )}
+
+      {/* Difficulty mode selector */}
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Mock difficulty</label>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+          {[
+            { value: 'match', label: 'Match papers', desc: 'Identical difficulty to your past papers' },
+            { value: 'harder', label: 'Slightly harder', desc: '~15-20% more challenging' },
+            { value: 'exam-plus', label: 'Exam-plus', desc: 'Hardest prep — multi-concept synthesis' }
+          ].map(opt => (
+            <button key={opt.value} onClick={() => setDifficulty(opt.value)} style={{
+              padding: '10px 12px', borderRadius: 10, textAlign: 'left', cursor: 'pointer',
+              border: difficulty === opt.value ? '2px solid var(--teal2)' : '1px solid var(--border)',
+              background: difficulty === opt.value ? 'var(--teal-bg)' : 'var(--bg3)'
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: difficulty === opt.value ? 'var(--teal2)' : 'var(--text)', marginBottom: 3 }}>{opt.label}</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1.4 }}>{opt.desc}</div>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <button onClick={handleConfirm} style={{ padding: '10px 24px', borderRadius: 10, fontSize: 14, fontWeight: 600, background: 'var(--teal)', color: '#fff', border: 'none', cursor: 'pointer' }}>
@@ -192,6 +228,7 @@ export default function MockPaper() {
   const [scope, setScope]                           = useState(null)
   const [analysing, setAnalysing]                   = useState(false)
   const [analyseError, setAnalyseError]             = useState(null)
+  const [globalDifficulty, setGlobalDifficulty]     = useState('match') // persisted per subject
   const pollRef = useRef(null)
 
   useEffect(() => {
@@ -203,8 +240,27 @@ export default function MockPaper() {
     clearInterval(pollRef.current)
     setError(null); setSlotsExhausted(false)
     setScope(null); setSubjectDocs([]); setAnalyseError(null)
-    if (selectedSubjectId) { loadSubjectPapers(); loadSubjectDocs(); loadScope() }
+    if (selectedSubjectId) {
+      loadSubjectPapers(); loadSubjectDocs(); loadScope()
+      // Load saved difficulty for this subject
+      const subj = subjects.find(s => s.id === selectedSubjectId)
+      if (subj?.difficultyLevel) setGlobalDifficulty(subj.difficultyLevel)
+      else setGlobalDifficulty('match')
+    }
   }, [selectedSubjectId])
+
+  async function saveDifficulty(level) {
+    setGlobalDifficulty(level)
+    // Persist to subject record
+    try {
+      const token = await getToken()
+      await fetch('/api/subjects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ id: selectedSubjectId, difficultyLevel: level })
+      })
+    } catch {}
+  }
 
   useEffect(() => {
     const pending = subjectPapers.filter(p => p.status === 'queued' || p.status === 'generating')
@@ -287,7 +343,7 @@ export default function MockPaper() {
       const res = await fetch('/api/generate-mock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ subjectId: selectedSubjectId, customInstructions, forceNew, replaceSlot, confirmedScope: scope?.confirmed ? scope : null })
+        body: JSON.stringify({ subjectId: selectedSubjectId, customInstructions, forceNew, replaceSlot, confirmedScope: scope?.confirmed ? scope : null, difficultyMode: globalDifficulty })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to queue paper')
@@ -498,14 +554,38 @@ export default function MockPaper() {
             <ScopeCard scope={scope} onConfirm={confirmScope} onReanalyse={runAnalysis} analysing={analysing} />
           )}
 
-          {/* Confirmed scope badge */}
+          {/* Confirmed scope badge + persistent difficulty */}
           {scopeConfirmed && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, padding: '10px 14px', background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', borderRadius: 10 }}>
-              <div style={{ flex: 1 }}>
-                <span style={{ fontSize: 13, color: 'var(--teal2)', fontWeight: 600 }}>📋 {scope.summaryLine || `${scope.term} · ${scope.examType}`}</span>
-                {scope.topics?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>{scope.topics.slice(0, 4).join(' · ')}{scope.topics.length > 4 ? ` +${scope.topics.length - 4}` : ''}</span>}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', borderRadius: '10px 10px 0 0' }}>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: 13, color: 'var(--teal2)', fontWeight: 600 }}>📋 {scope.summaryLine || `${scope.term} · ${scope.examType}`}</span>
+                  {scope.topics?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>{scope.topics.slice(0, 4).join(' · ')}{scope.topics.length > 4 ? ` +${scope.topics.length - 4}` : ''}</span>}
+                </div>
+                <button onClick={clearScope} style={{ fontSize: 11, color: 'var(--text3)', background: 'none', border: 'none', cursor: 'pointer' }}>Change scope</button>
               </div>
-              <button onClick={clearScope} style={{ fontSize: 11, color: 'var(--text3)', background: 'none', border: 'none', cursor: 'pointer' }}>Change scope</button>
+              {/* Persistent difficulty selector */}
+              <div style={{ background: 'var(--bg2)', border: '1px solid var(--teal-border)', borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '12px 14px' }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Difficulty — applies to all mocks and quizzes for this subject
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[
+                    { value: 'match', label: 'Match papers', desc: 'Identical difficulty' },
+                    { value: 'harder', label: 'Slightly harder', desc: '~15-20% stretch' },
+                    { value: 'exam-plus', label: 'Exam-plus', desc: 'Maximum challenge' }
+                  ].map(opt => (
+                    <button key={opt.value} onClick={() => saveDifficulty(opt.value)} style={{
+                      flex: 1, padding: '8px 10px', borderRadius: 8, textAlign: 'left', cursor: 'pointer',
+                      border: globalDifficulty === opt.value ? '2px solid var(--teal2)' : '1px solid var(--border)',
+                      background: globalDifficulty === opt.value ? 'var(--teal-bg)' : 'var(--bg3)'
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: globalDifficulty === opt.value ? 'var(--teal2)' : 'var(--text)', marginBottom: 2 }}>{opt.label}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text3)' }}>{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
