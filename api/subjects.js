@@ -33,20 +33,29 @@ export default async function handler(req, res) {
       const body = await parseBody(req)
       const subjects = await redisGet(key) || []
 
-      // PATCH — update existing subject (difficulty, topics, etc.)
       if (body.id) {
         const idx = subjects.findIndex(s => s.id === body.id)
         if (idx >= 0) {
+          // PATCH — subject exists, update it
           subjects[idx] = { ...subjects[idx], ...body, updatedAt: new Date().toISOString() }
           await redisSet(key, subjects)
           res.status(200).json({ subject: subjects[idx] })
-        } else {
-          res.status(404).json({ error: 'Subject not found' })
+          return
         }
+        // id provided but doesn't exist yet — CREATE with that id
+        // (SubjectSetup.jsx generates id client-side before calling saveSubject)
+        const subject = {
+          ...body,
+          difficultyLevel: body.difficultyLevel || 'match',
+          createdAt: body.createdAt || new Date().toISOString()
+        }
+        subjects.push(subject)
+        await redisSet(key, subjects)
+        res.status(200).json({ subject })
         return
       }
 
-      // CREATE — new subject
+      // No id at all — generate one and CREATE
       const subject = {
         id: genId(),
         name: body.name || 'Unnamed Subject',
@@ -54,7 +63,7 @@ export default async function handler(req, res) {
         examBoard: body.examBoard || 'BSSS',
         yearLevel: body.yearLevel || '12',
         topics: body.topics || [],
-        difficultyLevel: 'match',   // default difficulty — persisted per subject
+        difficultyLevel: 'match',
         createdAt: new Date().toISOString()
       }
       subjects.push(subject)
