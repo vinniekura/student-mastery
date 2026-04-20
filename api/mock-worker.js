@@ -10,35 +10,56 @@ async function parseBody(req) {
 }
 
 function extractJson(text) {
+  // Try direct parse first
   try { return JSON.parse(text.trim()) } catch {}
+
+  // Strip markdown fences
   const stripped = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim()
   try { return JSON.parse(stripped) } catch {}
-  const start = text.indexOf('{'), end = text.lastIndexOf('}')
-  if (start !== -1 && end !== -1 && end > start) {
-    try {
-      const fixed = text.slice(start, end + 1).replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')
-      return JSON.parse(fixed)
-    } catch {}
-  }
-  if (start !== -1) {
-    let partial = text.slice(start)
-    const lastQ = partial.lastIndexOf('"topic"')
-    if (lastQ > 0) {
-      let depth = 0, closeAt = -1
-      for (let i = lastQ; i < partial.length; i++) {
-        if (partial[i] === '{') depth++
-        if (partial[i] === '}') { depth--; if (depth <= 0) { closeAt = i; break } }
-      }
-      if (closeAt > 0) {
-        try {
-          const fixed = (partial.slice(0, closeAt + 1) + ']}]}')
-            .replace(/,\s*}/g, '}').replace(/,\s*]/g, ']')
-          const parsed = JSON.parse(fixed)
-          if (parsed.sections) { parsed._truncated = true; return parsed }
-        } catch {}
-      }
+
+  // Find outermost { }
+  const start = text.indexOf('{')
+  if (start === -1) throw new Error('No JSON object found in response')
+
+  // Try progressively shorter substrings from the end
+  for (let end = text.length - 1; end > start; end--) {
+    if (text[end] === '}') {
+      try {
+        const slice = text.slice(start, end + 1)
+        const parsed = JSON.parse(slice)
+        if (parsed && typeof parsed === 'object') return parsed
+      } catch {}
     }
   }
+
+  // Last resort: try to auto-close truncated JSON
+  const partial = text.slice(start)
+  // Count open braces/brackets and close them
+  let openBraces = 0, openBrackets = 0, inString = false, escape = false
+  for (const ch of partial) {
+    if (escape) { escape = false; continue }
+    if (ch === '\\' && inString) { escape = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '{') openBraces++
+    if (ch === '}') openBraces--
+    if (ch === '[') openBrackets++
+    if (ch === ']') openBrackets--
+  }
+  // Remove trailing comma if present
+  let closed = partial.trimEnd().replace(/,\s*$/, '')
+  // Close open structures
+  while (openBrackets > 0) { closed += ']'; openBrackets-- }
+  while (openBraces > 0) { closed += '}'; openBraces-- }
+  try {
+    const parsed = JSON.parse(closed)
+    if (parsed?.sections || parsed?.title) {
+      parsed._truncated = true
+      console.log('Recovered truncated JSON — sections:', parsed.sections?.length)
+      return parsed
+    }
+  } catch {}
+
   throw new Error('Could not extract JSON from response')
 }
 
