@@ -67,7 +67,7 @@ export default async function handler(req, res) {
       const url = req.url || ''
       const qIdx = url.indexOf('?')
       const params = new URLSearchParams(qIdx >= 0 ? url.slice(qIdx + 1) : '')
-      const subjectId = params.get('subjectId')
+      const subjectId = params.get('subjectId') || params.get('id')
       if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
       const subjects = await redisGet(key) || []
       await redisSet(key, subjects.filter(s => s.id !== subjectId))
