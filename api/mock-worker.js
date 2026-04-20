@@ -730,3 +730,5 @@ function buildGenericSVG(description) {
   return `<svg width="380" height="${h}" viewBox="0 0 380 ${h}" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;"><rect width="380" height="${h}" fill="#f8fafc" rx="8" stroke="#e2e8f0" stroke-width="1.5"/><text x="190" y="36" font-size="12" fill="#64748b" text-anchor="middle" font-weight="600">Diagram</text>${lines.map((l, i) => `<text x="190" y="${54+i*22}" font-size="12" fill="#334155" text-anchor="middle">${l}</text>`).join('')}</svg>`
 }
 // Mon Apr 20 23:46:15 AUSEST 2026
+
+// force-redeploy-haiku-1776693012
