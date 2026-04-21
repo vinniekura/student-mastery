@@ -357,6 +357,7 @@ export default async function handler(req, res) {
     const diffProfile  = confirmedScope?.difficultyProfile||null
     const diffNote     = buildDifficultyNote(diffProfile, difficultyMode)
     const topicsList   = scopeTopics.length>0 ? scopeTopics.join(', ') : `General ${name}`
+    const sys = `You are an expert ${examBoard} exam paper writer for ${name}. Generate realistic exam questions matching actual ${examBoard} past papers. ONLY generate questions on: ${topicsList}. Return ONLY valid JSON arrays.`
 
     // Doc context — 800 chars max
     const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`)||[]
@@ -503,13 +504,14 @@ Return ONLY a valid JSON array:
       ...saQs.map(q=>q.topic).filter(Boolean)
     ])]
 
+    // Save as PARTIAL at 50% — mock-worker-b will complete it
     const record = {
       id:jobId, slotNumber, subjectId, subjectName:name,
       levelDescription:levelDesc, examBoard,
       scopeTerm:scopeTerm||null, scopeExamType:scopeType, difficultyMode,
-      generatedAt:new Date().toISOString(), completedAt:new Date().toISOString(),
+      generatedAt:new Date().toISOString(),
       sourceType:allDocs.length>0?'docs':'syllabus', docCount:allDocs.length,
-      topicsCovered, status:'ready', paper
+      topicsCovered, status:'generating', progress:50, paper
     }
 
     const finalPapers = await redisGet(paperKey)||[]
@@ -517,8 +519,37 @@ Return ONLY a valid JSON array:
     if(fi>=0) finalPapers[fi]=record; else finalPapers.push(record)
     await redisSet(paperKey, finalPapers.slice(0,5).sort((a,b)=>a.slotNumber-b.slotNumber))
 
-    console.log(`Paper ${slotNumber} ready — ${mcqQs.length} MCQ + ${saQs.length} SA (${allDiagrams.length} diagrams) = ${total} marks`)
-    res.status(200).json({ ok:true, jobId, slotNumber, totalMarks:total, diagrams:allDiagrams.length })
+    console.log(`Paper ${slotNumber} 50% done — ${mcqQs.length} MCQ + ${saQs.length} SA = ${total} marks. Queuing mock-worker-b...`)
+
+    // Queue mock-worker-b to add SA Q3+Q4 + Section C extended response
+    const workerBUrl = `https://${req.headers.host}/api/mock-worker-b`
+    const qstashRes = await fetch('https://qstash.upstash.io/v2/publish/' + workerBUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.QSTASH_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Upstash-Retries': '0'
+      },
+      body: JSON.stringify({
+        jobId, userId, subjectId, slotNumber,
+        partialPaper: paper,
+        confirmedScope,
+        difficultyMode,
+        topicsList,
+        sys
+      })
+    })
+
+    if(!qstashRes.ok) {
+      const errText = await qstashRes.text()
+      console.error('QStash B failed:', qstashRes.status, errText.slice(0,100))
+      // Don't fail — paper is usable at 50%, just won't have Section C
+      const allP2 = await redisGet(paperKey)||[]
+      const fi2 = allP2.findIndex(p=>p.id===jobId)
+      if(fi2>=0){ allP2[fi2].status='ready'; allP2[fi2].progress=100; await redisSet(paperKey,allP2) }
+    }
+
+    res.status(200).json({ ok:true, jobId, slotNumber, totalMarks:total, progress:50 })
 
   } catch(e) {
     console.error('mock-worker error:', e.message)

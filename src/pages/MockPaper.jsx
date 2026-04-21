@@ -604,7 +604,7 @@ export default function MockPaper() {
               {pendingPapers.length > 0 && (
                 <div style={{ background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.3)', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: '#d97706', marginBottom: 4 }}>{pendingPapers.map(p => `Mock ${p.slotNumber}`).join(', ')} {pendingPapers.length === 1 ? 'is' : 'are'} being generated</div>
-                  <div style={{ fontSize: 12, color: '#92400e' }}>Full exam papers take 2-5 minutes. The slot will show "View" when ready.</div>
+                  <div style={{ fontSize: 12, color: '#92400e' }}>Full papers take 2-3 minutes — 4 Claude calls building MCQ + short answer + extended response. You can close the browser and we'll email you when it's ready.</div>
                 </div>
               )}
 
@@ -687,10 +687,25 @@ export default function MockPaper() {
                           <button onClick={() => generate()} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>+ Generate</button>
                         )}
                         {isPending && statusCfg && (
-                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                            {statusCfg.spin ? <div style={{ width: 22, height: 22, border: '2px solid var(--teal-border)', borderTopColor: 'var(--teal2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} /> : <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#d97706', animation: 'pulse 1.5s infinite' }} />}
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                            {statusCfg.spin
+                              ? <div style={{ width: 22, height: 22, border: '2px solid var(--teal-border)', borderTopColor: 'var(--teal2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />
+                              : <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#d97706', animation: 'pulse 1.5s infinite' }} />
+                            }
                             <div style={{ fontSize: 11, fontWeight: 600, color: statusCfg.color, textAlign: 'center' }}>{statusCfg.label}</div>
-                            <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center' }}>{statusCfg.sublabel}</div>
+                            {/* Progress bar */}
+                            {paper?.progress && (
+                              <>
+                                <div style={{ width: '100%', height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
+                                  <div style={{ height: '100%', width: `${paper.progress}%`, background: 'var(--teal2)', borderRadius: 2, transition: 'width 0.5s ease' }} />
+                                </div>
+                                <div style={{ fontSize: 10, color: 'var(--teal2)', fontWeight: 600 }}>{paper.progress}%</div>
+                                <div style={{ fontSize: 9, color: 'var(--text3)', textAlign: 'center' }}>
+                                  {paper.progress < 50 ? 'Writing MCQ + short answer...' : paper.progress < 75 ? 'Adding Section B questions...' : 'Writing extended response...'}
+                                </div>
+                              </>
+                            )}
+                            {!paper?.progress && <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center' }}>2-3 minutes · close browser and come back</div>}
                           </div>
                         )}
                         {isFailed && (

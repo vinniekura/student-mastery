@@ -4,6 +4,7 @@
   ],
   "functions": {
     "api/mock-worker.js":   { "maxDuration": 300 },
+    "api/mock-worker-b.js": { "maxDuration": 300 },
     "api/ingest-doc.js":    { "maxDuration": 300 },
     "api/docs.js":          { "maxDuration": 60 },
     "api/generate-mock.js": { "maxDuration": 60 },
