@@ -504,14 +504,106 @@ Return ONLY a valid JSON array:
       ...saQs.map(q=>q.topic).filter(Boolean)
     ])]
 
-    // Save as PARTIAL at 50% — mock-worker-b will complete it
+    // Update progress to 50%
+    const midPapers = await redisGet(paperKey)||[]
+    const mi = midPapers.findIndex(p=>p.id===jobId)
+    if(mi>=0){ midPapers[mi].status='generating'; midPapers[mi].progress=50; midPapers[mi].paper=paper; await redisSet(paperKey,midPapers) }
+
+    console.log(`Paper ${slotNumber} 50% — starting calls 3+4...`)
+
+    // ── CALL 3: SA Q3+Q4 ─────────────────────────────────────────────────────
+    const existingQCount = (paper.sections||[]).flatMap(s=>s.questions||[]).length
+
+    const call3Text = await callClaude(sys,
+`Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${difficultyMode==='harder'?'~20% harder than past papers':difficultyMode==='exam-plus'?'Maximum difficulty — multi-concept synthesis':'Match past paper difficulty exactly'}${memoryNote}
+
+Generate exactly 2 more short answer questions (different topics from SA Q1-Q2 already generated).
+RULES:
+- ALL given values must be in the question text
+- Each question: 3-4 sub-parts, 8-12 marks total
+- Include a diagram if relevant
+- Parts build — part b uses result from part a
+
+Diagram types: "parallel-plates","magnetic-field","gravitational-field","two-charges","free-body"
+
+Return ONLY valid JSON array:
+[{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":10,"diagram":{"type":"gravitational-field","description":"g vs distance graph","params":{"bodyName":"Earth","surfaceG":"9.8"}},"parts":[{"part":"a","question":"Sub-question","marks":3,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`, 2800)
+
+    let saQs2 = extractJsonArray(call3Text)||[]
+    saQs2 = saQs2.map((q,i)=>({...q, number:existingQCount+i+1}))
+    saQs2 = saQs2.map(q=>{
+      if(q.diagram){ const svg=renderDiagramSVG(q.diagram); if(svg) return{...q,diagram:{...q.diagram,svg}} }
+      return q
+    })
+
+    // Add to Section B
+    const sectionB = paper.sections?.find(s=>s.type==='short')
+    if(sectionB){ sectionB.questions=[...(sectionB.questions||[]),...saQs2]; sectionB.marks=sectionB.questions.reduce((s,q)=>s+(q.marks||0),0) }
+
+    // Update progress to 75%
+    const p75 = await redisGet(paperKey)||[]
+    const p75i = p75.findIndex(p=>p.id===jobId)
+    if(p75i>=0){ p75[p75i].progress=75; p75[p75i].paper=paper; await redisSet(paperKey,p75) }
+
+    console.log(`Paper ${slotNumber} 75% — starting call 4 (extended response)...`)
+
+    // ── CALL 4: Section C Extended Response ──────────────────────────────────
+    const totalQSoFar = existingQCount + saQs2.length
+
+    const call4Text = await callClaude(sys,
+`Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${difficultyMode==='exam-plus'?'Maximum — multi-concept synthesis, 3+ steps':'Match past paper difficulty'}
+
+Generate exactly 1 extended response question for Section C.
+This is the hardest question — synthesis of 2-3 concepts, 15-20 marks, 5-6 sub-parts.
+For Physics: velocity selector (crossed E and B fields), OR orbital mechanics + circular motion, OR solenoid + force on conductor.
+For other subjects: choose the most complex synthesis topic from the scope.
+RULES:
+- Include ALL given values in question stem
+- Include diagram if relevant
+- Parts a-f build progressively
+- Final part requires evaluation or analysis, not just calculation
+
+Return ONLY valid JSON array with ONE question:
+[{"number":${totalQSoFar+1},"question":"Full extended scenario with ALL given values","topic":"Topic","marks":18,"isExtended":true,"diagram":{"type":"parallel-plates","description":"Velocity selector setup","params":{"separation":"3.0 cm","voltage":"4500 V","particleCharge":"positive","topPlatePolarity":"positive"}},"parts":[{"part":"a","question":"First sub-part","marks":2,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`, 3000)
+
+    let extQs = extractJsonArray(call4Text)||[]
+    extQs = extQs.map((q,i)=>({...q, number:totalQSoFar+i+1, isExtended:true}))
+    extQs = extQs.map(q=>{
+      if(q.diagram){ const svg=renderDiagramSVG(q.diagram); if(svg) return{...q,diagram:{...q.diagram,svg}} }
+      return q
+    })
+
+    // Add Section C
+    if(extQs.length>0){
+      paper.sections=[...(paper.sections||[]),{
+        name:'Section C: Extended Response', type:'extended',
+        marks:extQs.reduce((s,q)=>s+(q.marks||0),0),
+        instructions:'Answer ALL questions. Show all working clearly. Marks are awarded for correct method and working.',
+        questions:extQs
+      }]
+    }
+
+    // Final total
+    const finalTotal = (paper.sections||[]).reduce((s,sec)=>s+sec.marks,0)
+    paper.totalMarks = finalTotal
+    if(paper.coverPage) paper.coverPage.totalMarks = finalTotal
+
+    const topicsCovered = [...new Set(
+      (paper.sections||[]).flatMap(s=>s.questions||[]).map(q=>q.topic).filter(Boolean)
+    )]
+
+    // Save as READY at 100%
     const record = {
       id:jobId, slotNumber, subjectId, subjectName:name,
       levelDescription:levelDesc, examBoard,
       scopeTerm:scopeTerm||null, scopeExamType:scopeType, difficultyMode,
-      generatedAt:new Date().toISOString(),
+      generatedAt:new Date().toISOString(), completedAt:new Date().toISOString(),
       sourceType:allDocs.length>0?'docs':'syllabus', docCount:allDocs.length,
-      topicsCovered, status:'generating', progress:50, paper
+      topicsCovered, status:'ready', progress:100, paper
     }
 
     const finalPapers = await redisGet(paperKey)||[]
@@ -519,37 +611,29 @@ Return ONLY a valid JSON array:
     if(fi>=0) finalPapers[fi]=record; else finalPapers.push(record)
     await redisSet(paperKey, finalPapers.slice(0,5).sort((a,b)=>a.slotNumber-b.slotNumber))
 
-    console.log(`Paper ${slotNumber} 50% done — ${mcqQs.length} MCQ + ${saQs.length} SA = ${total} marks. Queuing mock-worker-b...`)
+    console.log(`Paper ${slotNumber} COMPLETE — ${finalTotal} marks | ${topicsCovered.length} topics | ${(paper.sections||[]).length} sections`)
 
-    // Queue mock-worker-b to add SA Q3+Q4 + Section C extended response
-    const workerBUrl = `https://${req.headers.host}/api/mock-worker-b`
-    const qstashRes = await fetch('https://qstash.upstash.io/v2/publish/' + workerBUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.QSTASH_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Upstash-Retries': '0'
-      },
-      body: JSON.stringify({
-        jobId, userId, subjectId, slotNumber,
-        partialPaper: paper,
-        confirmedScope,
-        difficultyMode,
-        topicsList,
-        sys
-      })
-    })
+    // Email notification
+    try {
+      if(process.env.RESEND_API_KEY){
+        const userData = await redisGet(`sm:profile:${userId}`)
+        const email = userData?.email
+        if(email){
+          await fetch('https://api.resend.com/emails',{
+            method:'POST',
+            headers:{'Authorization':`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},
+            body:JSON.stringify({
+              from:'Student Mastery <papers@datamastery.com.au>',
+              to:email,
+              subject:`Your ${name} Mock Paper ${slotNumber} is ready`,
+              html:`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px"><h2 style="color:#1D9E75">Your mock paper is ready!</h2><p><strong>${name} — Mock Paper ${slotNumber}</strong><br>${finalTotal} marks · ${topicsCovered.slice(0,4).join(', ')}${topicsCovered.length>4?` +${topicsCovered.length-4} more`:''}</p><a href="https://studentmastery.datamastery.com.au/mock-paper" style="display:inline-block;background:#1D9E75;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">View paper →</a></div>`
+            })
+          })
+        }
+      }
+    } catch(emailErr){ console.log('Email skipped:', emailErr.message) }
 
-    if(!qstashRes.ok) {
-      const errText = await qstashRes.text()
-      console.error('QStash B failed:', qstashRes.status, errText.slice(0,100))
-      // Don't fail — paper is usable at 50%, just won't have Section C
-      const allP2 = await redisGet(paperKey)||[]
-      const fi2 = allP2.findIndex(p=>p.id===jobId)
-      if(fi2>=0){ allP2[fi2].status='ready'; allP2[fi2].progress=100; await redisSet(paperKey,allP2) }
-    }
-
-    res.status(200).json({ ok:true, jobId, slotNumber, totalMarks:total, progress:50 })
+    res.status(200).json({ ok:true, jobId, slotNumber, totalMarks:finalTotal, sections:(paper.sections||[]).length })
 
   } catch(e) {
     console.error('mock-worker error:', e.message)
