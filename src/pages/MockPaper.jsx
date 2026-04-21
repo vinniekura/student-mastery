@@ -440,6 +440,15 @@ export default function MockPaper() {
                   <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--bg3)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'var(--text2)', flexShrink: 0, marginTop: 2 }}>{q.number}</div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>{renderQuestionText(q.question, paper.diagrams)}</div>
+                    {/* Render diagram directly on question if present */}
+                    {q.diagram?.svg && (
+                      <div style={{ margin: '12px 0', padding: '16px', background: 'white', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', justifyContent: 'center', overflowX: 'auto' }}>
+                        <div dangerouslySetInnerHTML={{ __html: q.diagram.svg }} />
+                      </div>
+                    )}
+                    {q.diagram && !q.diagram.svg && q.diagram.description && (
+                      <DiagramPlaceholder desc={q.diagram.description} />
+                    )}
                     {q.parts && q.parts.map((part, pIdx) => (
                       <div key={pIdx} style={{ marginLeft: 16, marginBottom: 12 }}>
                         <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
@@ -600,6 +609,46 @@ export default function MockPaper() {
               )}
 
               <div style={{ marginBottom: 20 }}>
+                {/* Coverage tracker — shows all topics, which papers covered them */}
+                {(() => {
+                  const allTopics = scope?.topics || []
+                  const coveredTopics = [...new Set(readyPapers.flatMap(p => p.topicsCovered || []))]
+                  const gapTopics = allTopics.filter(t => !coveredTopics.some(c => c.toLowerCase().includes(t.toLowerCase().slice(0,8))))
+                  if (allTopics.length === 0 || readyPapers.length === 0) return null
+                  const pct = Math.round((coveredTopics.length / Math.max(allTopics.length, coveredTopics.length)) * 100)
+                  return (
+                    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', marginBottom: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>Topic coverage across all papers</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: pct >= 80 ? 'var(--teal2)' : '#d97706' }}>{pct}% covered</div>
+                      </div>
+                      {/* Progress bar */}
+                      <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, marginBottom: 10, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: pct >= 80 ? 'var(--teal2)' : '#d97706', borderRadius: 3, transition: 'width 0.5s ease' }} />
+                      </div>
+                      {/* Covered topics */}
+                      {coveredTopics.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: gapTopics.length > 0 ? 8 : 0 }}>
+                          {coveredTopics.map(t => (
+                            <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981' }}>✓ {t}</span>
+                          ))}
+                        </div>
+                      )}
+                      {/* Gap topics — shown in amber */}
+                      {gapTopics.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5 }}>Queued for upcoming papers:</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                            {gapTopics.map(t => (
+                              <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.3)', color: '#d97706' }}>→ {t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+
                 <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                   Mock papers — {readyPapers.length}/5 ready{pendingPapers.length > 0 && <span style={{ color: '#d97706', marginLeft: 8 }}>· {pendingPapers.length} generating</span>}
                 </div>
@@ -612,11 +661,29 @@ export default function MockPaper() {
                     const isReady   = status === 'ready'
                     const isPending = status === 'queued' || status === 'generating'
                     const isFailed  = status === 'failed'
+                    // For next empty slot — show what gap topics will be covered
+                    const isNextSlot = isEmpty && readyPapers.length + pendingPapers.length === slot - 1
+                    const allTopics  = scope?.topics || []
+                    const covered    = [...new Set(readyPapers.flatMap(p => p.topicsCovered || []))]
+                    const gaps       = allTopics.filter(t => !covered.some(c => c.toLowerCase().includes(t.toLowerCase().slice(0,8))))
                     return (
-                      <div key={slot} style={{ background: isEmpty ? 'var(--bg3)' : 'var(--bg2)', border: `1px solid ${isPending ? 'rgba(217,119,6,0.4)' : isEmpty ? 'var(--border)' : 'var(--border2)'}`, borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 160 }}>
+                      <div key={slot} style={{ background: isEmpty ? 'var(--bg3)' : 'var(--bg2)', border: `1px solid ${isPending ? 'rgba(217,119,6,0.4)' : isNextSlot ? 'rgba(217,119,6,0.25)' : isEmpty ? 'var(--border)' : 'var(--border2)'}`, borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 160 }}>
                         <span style={{ fontSize: 11, fontWeight: 600, color: isPending ? '#d97706' : isEmpty ? 'var(--text3)' : 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Mock {slot}</span>
-                        {isEmpty && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Empty slot</div>}
-                        {isEmpty && !submitting && readyPapers.length + pendingPapers.length === slot - 1 && (
+                        {isEmpty && !isNextSlot && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Empty slot</div>}
+                        {/* Next slot — show gap preview */}
+                        {isNextSlot && gaps.length > 0 && (
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 10, color: '#d97706', marginBottom: 5, fontWeight: 600 }}>Will cover gaps:</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 8 }}>
+                              {gaps.slice(0, 4).map(t => (
+                                <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.25)', color: '#d97706' }}>→ {t.length > 22 ? t.slice(0,22)+'…' : t}</span>
+                              ))}
+                              {gaps.length > 4 && <span style={{ fontSize: 9, color: 'var(--text3)' }}>+{gaps.length - 4} more</span>}
+                            </div>
+                            <button onClick={() => generate()} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer', width: '100%' }}>+ Generate</button>
+                          </div>
+                        )}
+                        {isNextSlot && gaps.length === 0 && (
                           <button onClick={() => generate()} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>+ Generate</button>
                         )}
                         {isPending && statusCfg && (
@@ -624,7 +691,6 @@ export default function MockPaper() {
                             {statusCfg.spin ? <div style={{ width: 22, height: 22, border: '2px solid var(--teal-border)', borderTopColor: 'var(--teal2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} /> : <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#d97706', animation: 'pulse 1.5s infinite' }} />}
                             <div style={{ fontSize: 11, fontWeight: 600, color: statusCfg.color, textAlign: 'center' }}>{statusCfg.label}</div>
                             <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center' }}>{statusCfg.sublabel}</div>
-                            <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center' }}>2-5 minutes</div>
                           </div>
                         )}
                         {isFailed && (
@@ -637,7 +703,14 @@ export default function MockPaper() {
                           <>
                             <div style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(paper.completedAt || paper.generatedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
                             {paper.scopeTerm && <div style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'var(--teal-bg)', color: 'var(--teal2)', border: '1px solid var(--teal-border)', display: 'inline-block', alignSelf: 'flex-start' }}>{paper.scopeTerm}</div>}
-                            {paper.topicsCovered?.length > 0 && <div style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1.5 }}>{paper.topicsCovered.slice(0, 3).join(' · ')}{paper.topicsCovered.length > 3 ? ` +${paper.topicsCovered.length - 3}` : ''}</div>}
+                            {paper.topicsCovered?.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                                {paper.topicsCovered.slice(0,4).map(t => (
+                                  <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' }}>✓ {t.length > 18 ? t.slice(0,18)+'…' : t}</span>
+                                ))}
+                                {paper.topicsCovered.length > 4 && <span style={{ fontSize: 9, color: 'var(--text3)' }}>+{paper.topicsCovered.length-4}</span>}
+                              </div>
+                            )}
                             {(() => { const s = SOURCE_LABELS[paper.sourceType] || SOURCE_LABELS.syllabus; return <div style={{ fontSize: 10, padding: '2px 7px', borderRadius: 10, display: 'inline-block', alignSelf: 'flex-start', background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>{s.label}</div> })()}
                             <div style={{ display: 'flex', gap: 5, marginTop: 'auto' }}>
                               <button onClick={() => setViewingPaper({ ...paper, subjectName: selectedSubject?.name })} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>View</button>

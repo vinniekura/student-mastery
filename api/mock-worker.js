@@ -398,14 +398,14 @@ Return ONLY valid JSON arrays — no markdown, no explanation.`
 
 Generate exactly 10 multiple choice questions for a ${examBoard} ${name} exam.
 Rules:
-- Each worth 1 mark
-- 4 options (A/B/C/D) with plausible distractors based on common student mistakes
-- Mix of recall (2), application (5), and analysis (3) questions
+- Each worth 1 mark, 4 options (A/B/C/D)
+- Plausible distractors based on common student mistakes
+- Include ALL given values needed to solve calculation questions
 - ONLY from these topics: ${topicsList}
-- Realistic numerical values where calculations needed
+- Mix: recall (3), application (4), analysis (3)
 
-Return ONLY this JSON array:
-[{"number":1,"question":"Full question text with any given values","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"B","topic":"Topic name","workingOut":"Step-by-step solution showing working"}]`, 2500)
+Return ONLY a valid JSON array — no preamble, no markdown:
+[{"number":1,"question":"Full question text with ALL given values","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"B","topic":"Topic name","workingOut":"Solution"}]`, 3500)
 
     let mcqQs = extractJsonArray(mcqText) || []
 
@@ -414,34 +414,31 @@ Return ONLY this JSON array:
 `${ctx}
 
 Generate exactly 2 short answer questions for a ${examBoard} ${name} exam.
-IMPORTANT: At least ONE question MUST include a diagram. 
-Diagram types available (choose whichever fits the physics):
-- "parallel-plates": two charged plates with E field and particle between them
-- "magnetic-field": grid of × or • symbols showing B field, particle with velocity arrow  
-- "gravitational-field": graph of g vs distance (inverse square curve)
-- "two-charges": two point charges on x-axis with point P marked
-- "free-body": object with force arrows (weight, normal, electric, applied)
+CRITICAL RULES:
+- Every calculation sub-part MUST include ALL given values (voltage, separation, mass, charge, field strength etc.) in the question text itself — never assume the student has them
+- At least ONE question MUST include a diagram
+- Each question: 3-4 sub-parts (a,b,c,d), total 8-12 marks
+- Parts must build — part b uses result from part a
 
-Each question: 3-4 sub-parts (a,b,c,d), total 8-12 marks. Parts build on each other.
-Sub-parts: mix of "state/explain" (1-2 marks) and "calculate" (2-3 marks).
+Diagram types: "parallel-plates", "magnetic-field", "gravitational-field", "two-charges", "free-body", "circuit", "wave"
 
-Return ONLY this JSON array:
+Return ONLY a valid JSON array:
 [{
   "number":11,
-  "question":"Scenario text. A [diagram type] is shown in the diagram.",
+  "question":"Full scenario with ALL given numerical values stated here",
   "topic":"Topic name",
   "marks":10,
   "diagram":{
     "type":"parallel-plates",
-    "description":"Two horizontal parallel plates separated by 4.0 cm. Upper plate positive, lower plate negative. Electron released from lower plate.",
+    "description":"Two horizontal plates separated by 4.0 cm. Upper plate positive (+), lower plate negative (−). Electron at lower plate.",
     "params":{"separation":"4.0 cm","voltage":"600 V","particleCharge":"negative","topPlatePolarity":"positive"}
   },
   "parts":[{
     "part":"a",
-    "question":"Sub-question text referencing diagram where relevant",
+    "question":"Sub-question with any additional given values needed",
     "marks":2,
-    "answer":"Full worked solution",
-    "markingCriteria":"Award 1 mark for [specific thing]. Award 1 mark for [specific thing]."
+    "answer":"Full worked solution with units",
+    "markingCriteria":"Award 1 mark for [X]. Award 1 mark for [Y]."
   }]
 }]`, 2800)
 
