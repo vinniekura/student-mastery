@@ -371,9 +371,21 @@ export default async function handler(req, res) {
       }
     }
 
+    // Paper memory — force gap topics into this paper
+    const existingPapers = await redisGet(paperKey)||[]
+    const coveredTopics = [...new Set(
+      existingPapers.filter(p=>p.status==='ready'&&p.id!==jobId).flatMap(p=>p.topicsCovered||[])
+    )]
+    const gapTopics = scopeTopics.filter(t=>
+      !coveredTopics.some(c=>c.toLowerCase().includes(t.toLowerCase().slice(0,8)))
+    )
+    const memoryNote = coveredTopics.length > 0
+      ? `\nPAPER MEMORY — Already covered: ${coveredTopics.join(', ')}.\nMUST prioritise these gap topics in this paper: ${gapTopics.length>0 ? gapTopics.join(', ') : 'fresh angles on all topics'}.`
+      : ''
+
     const ctx = `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
-Topics to cover (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
-Difficulty: ${diffNote}${customInstructions?`\nFocus: ${customInstructions}`:''}${docContext?`\nPast paper reference:\n${docContext.slice(0,600)}`:''}`
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${diffNote}${customInstructions?`\nFocus: ${customInstructions}`:''}${memoryNote}${docContext?`\nPast paper reference:\n${docContext.slice(0,600)}`:''}`
 
     const sys = `You are an expert ${examBoard} exam paper writer for ${name}. 
 Generate realistic exam questions that match the cognitive level and style of actual ${examBoard} past papers.
