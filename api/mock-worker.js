@@ -388,11 +388,6 @@ export default async function handler(req, res) {
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
 Difficulty: ${diffNote}${customInstructions?`\nFocus: ${customInstructions}`:''}${memoryNote}${docContext?`\nPast paper reference:\n${docContext.slice(0,600)}`:''}`
 
-    const sys = `You are an expert ${examBoard} exam paper writer for ${name}. 
-Generate realistic exam questions that match the cognitive level and style of actual ${examBoard} past papers.
-CRITICAL: Only generate questions on these topics: ${topicsList}
-Return ONLY valid JSON arrays — no markdown, no explanation.`
-
     // ── CALL 1: MCQ ──────────────────────────────────────────────────────────
     const mcqText = await callClaude(sys,
 `${ctx}
@@ -498,11 +493,6 @@ Return ONLY a valid JSON array:
         }
       ]
     }
-
-    const topicsCovered = [...new Set([
-      ...mcqQs.map(q=>q.topic).filter(Boolean),
-      ...saQs.map(q=>q.topic).filter(Boolean)
-    ])]
 
     // Update progress to 50%
     const midPapers = await redisGet(paperKey)||[]
