@@ -115,49 +115,67 @@ export default async function handler(req, res) {
       const ignoredDocs  = allDocs.filter(d => isHandwrittenSolution(d.filename, d.chunks))
 
       if (ignoredDocs.length > 0) {
-        console.log(`Ignoring ${ignoredDocs.length} solution/handwriting docs: ${ignoredDocs.map(d=>d.filename).join(', ')}`)
+        console.log(`Ignoring ${ignoredDocs.length} solution docs: ${ignoredDocs.map(d=>d.filename).join(', ')}`)
       }
 
-      const docsToAnalyse = questionDocs.length > 0 ? questionDocs : allDocs
+      // Split by docType — 'context' docs contribute topics only, not format
+      const primaryDocs  = questionDocs.filter(d => d.docType !== 'context')
+      const contextDocs  = questionDocs.filter(d => d.docType === 'context')
+      const docsToAnalyse = primaryDocs.length > 0 ? primaryDocs : questionDocs
 
-      // Sample text — prioritise question paper content
+      // Sample primary docs for format detection
       let docSamples = ''
       let totalChars = 0
       const MAX_CHARS = 3000
-
       for (const doc of docsToAnalyse) {
-        const label = `\n--- ${sanitizeText(doc.filename)} ---\n`
-        docSamples += label
-        totalChars += label.length
+        const label = `\n--- ${sanitizeText(doc.filename)} [EXAM PAPER] ---\n`
+        docSamples += label; totalChars += label.length
         for (const chunk of (doc.chunks || [])) {
           const clean = sanitizeText(chunk)
-          if (!clean) continue
-          if (totalChars + clean.length > MAX_CHARS) break
-          docSamples += clean + '\n'
-          totalChars += clean.length
+          if (!clean || totalChars + clean.length > MAX_CHARS) break
+          docSamples += clean + '\n'; totalChars += clean.length
         }
         if (totalChars >= MAX_CHARS) break
       }
 
-      const docSummary = docsToAnalyse.map(d =>
-        `• ${sanitizeText(d.filename)} (${d.chunkCount || 0} sections)`
-      ).join('\n')
+      // Sample context docs for topic enrichment only — small sample
+      let contextSamples = ''
+      if (contextDocs.length > 0) {
+        let ctxChars = 0
+        for (const doc of contextDocs) {
+          const label = `\n--- ${sanitizeText(doc.filename)} [CONTEXT/REFERENCE ONLY] ---\n`
+          contextSamples += label; ctxChars += label.length
+          for (const chunk of (doc.chunks || [])) {
+            const clean = sanitizeText(chunk)
+            if (!clean || ctxChars + clean.length > 800) break
+            contextSamples += clean + '\n'; ctxChars += clean.length
+          }
+          if (ctxChars >= 800) break
+        }
+      }
 
+      const docSummary = docsToAnalyse.map(d =>
+        `• ${sanitizeText(d.filename)} [exam paper] (${d.chunkCount || 0} sections)`
+      ).join('\n')
+      const contextSummary = contextDocs.length > 0
+        ? '\nContext/reference material (topics only):\n' + contextDocs.map(d => `• ${sanitizeText(d.filename)}`).join('\n')
+        : ''
       const ignoredSummary = ignoredDocs.length > 0
-        ? `\nIgnored as solution/handwriting sheets: ${ignoredDocs.map(d=>sanitizeText(d.filename)).join(', ')}`
+        ? `\nFiltered out as solution/handwriting sheets: ${ignoredDocs.map(d=>sanitizeText(d.filename)).join(', ')}`
         : ''
 
       const prompt = `You are analysing a student's uploaded exam papers to extract the exam scope and format for mock paper generation.
 
 SUBJECT INFO: ${subject.name || 'Unknown'} | ${subject.examBoard || 'Unknown'} | Year ${subject.yearLevel || '?'} | ${subject.state || 'ACT'}
 
-QUESTION PAPERS ANALYSED (${docsToAnalyse.length} total):
-${docSummary}${ignoredSummary}
+EXAM PAPERS (defines FORMAT — use these for structure detection):
+${docSummary}${contextSummary}${ignoredSummary}
 
-DOCUMENT CONTENT SAMPLE:
+EXAM PAPER CONTENT — read carefully to detect format:
 ${docSamples}
+${contextSamples ? `\nCONTEXT/REFERENCE MATERIAL — use for TOPIC enrichment only, NOT format:\n${contextSamples}` : ''}
 
-Analyse the question papers and extract:
+Analyse the exam papers and extract:
 
 1. TERM / PERIOD — what assessment period these papers cover
 
@@ -261,6 +279,7 @@ Return ONLY valid JSON, no markdown:
         ...analysis,
         docCount: docsToAnalyse.length,
         docNames: docsToAnalyse.map(d => sanitizeText(d.filename)),
+        contextDocNames: contextDocs.map(d => sanitizeText(d.filename)),
         ignoredDocNames: ignoredDocs.map(d => sanitizeText(d.filename)),
         analysedAt: new Date().toISOString(),
         confirmed: false  // must be confirmed by user before generating

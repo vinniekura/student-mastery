@@ -70,144 +70,204 @@ function ScopeCard({ scope, onConfirm, onReanalyse, analysing }) {
   const [term, setTerm]             = useState(scope.term || '')
   const [examType, setExamType]     = useState(scope.examType || '')
   const [topics, setTopics]         = useState((scope.topics || []).join(', '))
-  const [timeMins, setTimeMins]     = useState(scope.format?.timeMins || '')
+  const [timeMins, setTimeMins]     = useState(scope.format?.timeMins || 60)
   const [totalMarks, setTotalMarks] = useState(scope.format?.totalMarks || '')
+  const [hasMCQ, setHasMCQ]         = useState(scope.hasMCQ !== false)
   const [difficulty, setDifficulty] = useState('match')
+  const [step, setStep]             = useState('review') // 'review' | 'confirm'
 
-  const confidenceColor = scope.confidence === 'high' ? 'var(--teal2)' : scope.confidence === 'medium' ? '#d97706' : 'var(--red)'
-  const confidenceBg    = scope.confidence === 'high' ? 'var(--teal-bg)' : scope.confidence === 'medium' ? 'rgba(217,119,6,0.1)' : 'var(--red-bg)'
+  const topicList = topics.split(',').map(t => t.trim()).filter(Boolean)
+
+  function buildArc(topicArr) {
+    if (topicArr.length === 0) return Array.from({length:5},(_,i)=>({paper:i+1,topics:[]}))
+    const perPaper = Math.ceil(topicArr.length / 5)
+    return Array.from({length:5}, (_,i) => ({ paper:i+1, topics:topicArr.slice(i*perPaper,(i+1)*perPaper) }))
+  }
+  const arc = buildArc(topicList)
+
+  const confidenceColor = scope.confidence === 'high' ? 'var(--teal2)' : '#d97706'
+  const confidenceBg    = scope.confidence === 'high' ? 'var(--teal-bg)' : 'rgba(217,119,6,0.1)'
+  const inp = { width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13, boxSizing: 'border-box' }
 
   function handleConfirm() {
     onConfirm({
-      term,
-      examType,
-      topics: topics.split(',').map(t => t.trim()).filter(Boolean),
-      format: { timeMins: Number(timeMins) || 60, totalMarks: Number(totalMarks) || 100, sections: Array.isArray(scope.format?.sections) ? scope.format.sections : [] },
-      curriculum: scope.curriculum,
-      confidence: scope.confidence,
-      difficultyProfile: scope.difficultyProfile || null,
-      difficultyMode: difficulty,
-      levelDescription: scope.levelDescription || '',
-      summaryLine: `${term} · ${examType} · ${scope.curriculum || ''}`
+      term, examType,
+      topics: topicList,
+      format: { timeMins: Number(timeMins)||60, totalMarks: Number(totalMarks)||100, sections: Array.isArray(scope.format?.sections)?scope.format.sections:[], questionStructure: scope.format?.questionStructure||'', noMCQ: !hasMCQ },
+      curriculum: scope.curriculum, confidence: scope.confidence,
+      difficultyProfile: scope.difficultyProfile||null, difficultyMode: difficulty,
+      levelDescription: scope.levelDescription||'', hasMCQ,
+      sectionType: hasMCQ ? 'mcq-and-long-answer' : 'long-answer-only',
+      summaryLine: `${term} \u00b7 ${examType} \u00b7 ${scope.curriculum||''}`
     })
   }
 
-  const inp = { width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13 }
-
-  return (
-    <div style={{ background: 'var(--bg2)', border: '2px solid var(--teal-border)', borderRadius: 14, padding: 24, marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>
-            📋 Scope detected from your {scope.docCount} document{scope.docCount !== 1 ? 's' : ''}
+  function FormatPreview() {
+    const sections = hasMCQ
+      ? [{name:'Section A',sub:'Multiple choice',color:'#7c3aed'},{name:'Section B',sub:'Short answer',color:'var(--teal2)'},{name:'Section C',sub:'Extended response',color:'#d97706'}]
+      : [{name:'Questions',sub:'Multi-part (a)(b)(c)(d)(e)',color:'var(--teal2)'},{name:'Final Q',sub:'Extended synthesis',color:'#d97706'}]
+    return (
+      <div style={{display:'flex',gap:6}}>
+        {sections.map((s,i) => (
+          <div key={i} style={{flex:1,background:'var(--bg2)',border:`1px solid ${s.color}40`,borderRadius:8,padding:'8px 10px',borderTop:`3px solid ${s.color}`}}>
+            <div style={{fontSize:11,fontWeight:600,color:s.color}}>{s.name}</div>
+            <div style={{fontSize:10,color:'var(--text3)',marginTop:2}}>{s.sub}</div>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-            {scope.docNames?.slice(0, 3).join(', ')}{scope.docNames?.length > 3 ? ` +${scope.docNames.length - 3} more` : ''}
+        ))}
+      </div>
+    )
+  }
+
+  if (step === 'confirm') {
+    return (
+      <div style={{background:'var(--bg2)',border:'2px solid var(--teal-border)',borderRadius:14,padding:24,marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
+          <div style={{width:36,height:36,borderRadius:'50%',background:'var(--teal-bg)',border:'1px solid var(--teal-border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>✓</div>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>Ready to generate your 5 mock papers</div>
+            <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{topicList.length} topics · {hasMCQ?'MCQ + short answer + extended':'Long answer only'} · {timeMins} min · {totalMarks} marks</div>
           </div>
         </div>
-        <div style={{ fontSize: 11, padding: '4px 10px', borderRadius: 10, background: confidenceBg, color: confidenceColor, border: `1px solid ${confidenceColor}`, flexShrink: 0, marginLeft: 12 }}>
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:10}}>Your 5-paper coverage plan — each paper covers different topics</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:6}}>
+            {arc.map(({paper,topics:pt}) => (
+              <div key={paper} style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 10px',borderTop:'2px solid var(--teal-border)'}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--teal2)',marginBottom:5}}>Mock {paper}</div>
+                {pt.length>0
+                  ? pt.map(t=><div key={t} style={{fontSize:9,color:'var(--text3)',lineHeight:1.5,marginBottom:1}}>→ {t.length>22?t.slice(0,22)+'…':t}</div>)
+                  : <div style={{fontSize:9,color:'var(--text3)'}}>Gap revision + harder angles</div>
+                }
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={handleConfirm} style={{flex:1,padding:'12px 0',borderRadius:10,fontSize:14,fontWeight:700,background:'var(--teal)',color:'#fff',border:'none',cursor:'pointer'}}>
+            Generate Mock Paper 1 →
+          </button>
+          <button onClick={()=>setStep('review')} style={{padding:'12px 16px',borderRadius:10,fontSize:13,background:'var(--bg3)',color:'var(--text2)',border:'1px solid var(--border)',cursor:'pointer'}}>
+            ← Edit
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{background:'var(--bg2)',border:'2px solid var(--teal-border)',borderRadius:14,padding:24,marginBottom:20}}>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:'var(--text)',marginBottom:4}}>🔍 Here's what I understand about your exam</div>
+          <div style={{fontSize:12,color:'var(--text3)'}}>
+            Format from: {scope.docNames?.filter(n=>!scope.ignoredDocNames?.includes(n)).slice(0,2).join(', ')}{scope.docNames?.length>2?` +${scope.docNames.length-2} more`:''}
+            {scope.ignoredDocNames?.length>0 && <span style={{color:'#d97706'}}> · {scope.ignoredDocNames.length} solution sheet{scope.ignoredDocNames.length>1?'s':''} filtered out</span>}
+          </div>
+        </div>
+        <div style={{fontSize:11,padding:'4px 10px',borderRadius:10,background:confidenceBg,color:confidenceColor,border:`1px solid ${confidenceColor}40`,flexShrink:0,marginLeft:12}}>
           {scope.confidence} confidence
         </div>
       </div>
 
       {scope.confidenceReason && (
-        <div style={{ fontSize: 12, color: 'var(--text2)', background: 'var(--bg3)', padding: '8px 12px', borderRadius: 8, marginBottom: 16, borderLeft: `3px solid ${confidenceColor}` }}>
+        <div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'8px 12px',borderRadius:8,marginBottom:16,borderLeft:`3px solid ${confidenceColor}`}}>
           {scope.confidenceReason}
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div>
-          <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Term / Period</label>
-          <input style={inp} value={term} onChange={e => setTerm(e.target.value)} placeholder="e.g. Term 1, Semester 2" />
-          {scope.termOptions?.length > 0 && (
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
-              {scope.termOptions.map(t => (
-                <button key={t} onClick={() => setTerm(t)} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: term === t ? 'var(--teal)' : 'var(--bg3)', color: term === t ? '#fff' : 'var(--text3)', border: term === t ? 'none' : '1px solid var(--border)', cursor: 'pointer' }}>{t}</button>
-              ))}
-            </div>
-          )}
-        </div>
-        <div>
-          <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Exam type</label>
-          <input style={inp} value={examType} onChange={e => setExamType(e.target.value)} placeholder="e.g. unit test, final exam, UCAT" />
-          {scope.examTypeOptions?.length > 0 && (
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
-              {scope.examTypeOptions.map(t => (
-                <button key={t} onClick={() => setExamType(t)} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 8, background: examType === t ? 'var(--teal)' : 'var(--bg3)', color: examType === t ? '#fff' : 'var(--text3)', border: examType === t ? 'none' : '1px solid var(--border)', cursor: 'pointer' }}>{t}</button>
-              ))}
-            </div>
-          )}
-        </div>
-        <div>
-          <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Time allowed (minutes)</label>
-          <input style={inp} type="number" value={timeMins} onChange={e => setTimeMins(e.target.value)} placeholder="60" />
-        </div>
-        <div>
-          <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total marks</label>
-          <input style={inp} type="number" value={totalMarks} onChange={e => setTotalMarks(e.target.value)} placeholder="100" />
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Topics — comma separated, edit freely</label>
-        <textarea style={{ ...inp, height: 72, resize: 'vertical', lineHeight: 1.5 }} value={topics} onChange={e => setTopics(e.target.value)} placeholder="e.g. Electric fields, Magnetic fields, Gravitational fields, Capacitors" />
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
-          {topics.split(',').map(t => t.trim()).filter(Boolean).map((t, i) => (
-            <span key={i} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'var(--teal-bg)', color: 'var(--teal2)', border: '1px solid var(--teal-border)' }}>{t}</span>
+      <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:16}}>
+        <div style={{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:10}}>Detected exam format — is this right?</div>
+        <FormatPreview />
+        <div style={{marginTop:12,display:'flex',gap:6}}>
+          {[{val:false,label:'Long answer only',desc:'Multi-part (a)(b)(c)(d), no MCQ'},{val:true,label:'MCQ + Long answer',desc:'Multiple choice + written sections'}].map(opt=>(
+            <button key={String(opt.val)} onClick={()=>setHasMCQ(opt.val)} style={{flex:1,padding:'8px 12px',borderRadius:8,textAlign:'left',cursor:'pointer',border:hasMCQ===opt.val?'2px solid var(--teal2)':'1px solid var(--border)',background:hasMCQ===opt.val?'var(--teal-bg)':'var(--bg2)'}}>
+              <div style={{fontSize:11,fontWeight:600,color:hasMCQ===opt.val?'var(--teal2)':'var(--text)',marginBottom:2}}>{opt.label}</div>
+              <div style={{fontSize:10,color:'var(--text3)'}}>{opt.desc}</div>
+            </button>
           ))}
         </div>
+        {scope.format?.questionStructure && (
+          <div style={{marginTop:10,fontSize:11,color:'var(--text3)',padding:'6px 10px',background:'var(--bg2)',borderRadius:6}}>Style: {scope.format.questionStructure}</div>
+        )}
       </div>
 
-      {scope.format?.sections?.length > 0 && Array.isArray(scope.format.sections) && (
-        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>
-          <strong style={{ color: 'var(--text2)' }}>Detected format:</strong> {scope.format.sections.join(' · ')}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+        <div>
+          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Term / Period</label>
+          <input style={inp} value={term} onChange={e=>setTerm(e.target.value)} placeholder="e.g. SMO5 Statistics, Term 1" />
+          {scope.termOptions?.length>0 && (
+            <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:4}}>
+              {scope.termOptions.slice(0,4).map(t=>(
+                <button key={t} onClick={()=>setTerm(t)} style={{fontSize:10,padding:'2px 8px',borderRadius:8,background:term===t?'var(--teal)':'var(--bg3)',color:term===t?'#fff':'var(--text3)',border:term===t?'none':'1px solid var(--border)',cursor:'pointer'}}>{t}</button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+        <div>
+          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Exam type</label>
+          <input style={inp} value={examType} onChange={e=>setExamType(e.target.value)} placeholder="e.g. unit test, final exam" />
+          {scope.examTypeOptions?.length>0 && (
+            <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:4}}>
+              {scope.examTypeOptions.slice(0,4).map(t=>(
+                <button key={t} onClick={()=>setExamType(t)} style={{fontSize:10,padding:'2px 8px',borderRadius:8,background:examType===t?'var(--teal)':'var(--bg3)',color:examType===t?'#fff':'var(--text3)',border:examType===t?'none':'1px solid var(--border)',cursor:'pointer'}}>{t}</button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Time (minutes)</label>
+          <input style={inp} type="number" value={timeMins} onChange={e=>setTimeMins(e.target.value)} placeholder="60" />
+        </div>
+        <div>
+          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Total marks</label>
+          <input style={inp} type="number" value={totalMarks} onChange={e=>setTotalMarks(e.target.value)} placeholder="77" />
+        </div>
+      </div>
 
-      {/* Difficulty profile */}
-      {scope.difficultyProfile?.description && (
-        <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', marginBottom: 16 }}>
-          <div style={{ fontSize: 11, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Detected difficulty</div>
-          <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 4 }}>{scope.difficultyProfile.description}</div>
-          <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-            Cognitive level: {scope.difficultyProfile.cognitiveLevel} · Steps/problem: {scope.difficultyProfile.stepsPerCalculation} · Marks/question: {scope.difficultyProfile.marksPerQuestion}
+      <div style={{marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+          <label style={{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Topics to test — tap × to remove, add your own</label>
+          <span style={{fontSize:10,color:'var(--teal2)',fontWeight:600}}>{topicList.length} topics</span>
+        </div>
+        <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:8}}>
+          {topicList.map((t,i)=>(
+            <span key={i} onClick={()=>setTopics(topicList.filter((_,j)=>j!==i).join(', '))} style={{fontSize:10,padding:'3px 10px',borderRadius:10,background:'var(--teal-bg)',color:'var(--teal2)',border:'1px solid var(--teal-border)',cursor:'pointer',userSelect:'none'}}>
+              {t} ×
+            </span>
+          ))}
+        </div>
+        <textarea style={{...inp,height:64,resize:'vertical',lineHeight:1.5}} value={topics} onChange={e=>setTopics(e.target.value)} placeholder="Type to add more topics, comma separated..." />
+      </div>
+
+      <div style={{marginBottom:18}}>
+        <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Mock difficulty</label>
+        {scope.difficultyProfile?.description && (
+          <div style={{fontSize:11,color:'var(--text3)',marginBottom:8,padding:'6px 10px',background:'var(--bg3)',borderRadius:6}}>
+            Detected: {scope.difficultyProfile.description} · {scope.difficultyProfile.stepsPerCalculation} steps/problem
           </div>
-        </div>
-      )}
-
-      {/* Difficulty mode selector */}
-      <div style={{ marginBottom: 16 }}>
-        <label style={{ fontSize: 11, color: 'var(--text3)', display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Mock difficulty</label>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-          {[
-            { value: 'match', label: 'Match papers', desc: 'Identical difficulty to your past papers' },
-            { value: 'harder', label: 'Slightly harder', desc: '~15-20% more challenging' },
-            { value: 'exam-plus', label: 'Exam-plus', desc: 'Hardest prep — multi-concept synthesis' }
-          ].map(opt => (
-            <button key={opt.value} onClick={() => setDifficulty(opt.value)} style={{
-              padding: '10px 12px', borderRadius: 10, textAlign: 'left', cursor: 'pointer',
-              border: difficulty === opt.value ? '2px solid var(--teal2)' : '1px solid var(--border)',
-              background: difficulty === opt.value ? 'var(--teal-bg)' : 'var(--bg3)'
-            }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: difficulty === opt.value ? 'var(--teal2)' : 'var(--text)', marginBottom: 3 }}>{opt.label}</div>
-              <div style={{ fontSize: 10, color: 'var(--text3)', lineHeight: 1.4 }}>{opt.desc}</div>
+        )}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
+          {[{value:'match',label:'Match exactly',desc:'Same difficulty as your past papers'},{value:'harder',label:'Slightly harder',desc:'~20% more challenging'},{value:'exam-plus',label:'Exam-plus',desc:'Maximum — multi-concept synthesis'}].map(opt=>(
+            <button key={opt.value} onClick={()=>setDifficulty(opt.value)} style={{padding:'10px 12px',borderRadius:10,textAlign:'left',cursor:'pointer',border:difficulty===opt.value?'2px solid var(--teal2)':'1px solid var(--border)',background:difficulty===opt.value?'var(--teal-bg)':'var(--bg3)'}}>
+              <div style={{fontSize:11,fontWeight:600,color:difficulty===opt.value?'var(--teal2)':'var(--text)',marginBottom:3}}>{opt.label}</div>
+              <div style={{fontSize:10,color:'var(--text3)',lineHeight:1.4}}>{opt.desc}</div>
             </button>
           ))}
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <button onClick={handleConfirm} style={{ padding: '10px 24px', borderRadius: 10, fontSize: 14, fontWeight: 600, background: 'var(--teal)', color: '#fff', border: 'none', cursor: 'pointer' }}>
-          ✓ Confirm scope — start generating
+      <div style={{display:'flex',gap:10,alignItems:'center'}}>
+        <button onClick={()=>setStep('confirm')} style={{flex:1,padding:'11px 0',borderRadius:10,fontSize:14,fontWeight:700,background:'var(--teal)',color:'#fff',border:'none',cursor:'pointer'}}>
+          Looks right — show my paper plan →
         </button>
-        <button onClick={onReanalyse} disabled={analysing} style={{ padding: '10px 16px', borderRadius: 10, fontSize: 13, background: 'var(--bg3)', color: 'var(--text2)', border: '1px solid var(--border)', cursor: 'pointer' }}>
-          {analysing ? 'Analysing...' : 'Re-analyse docs'}
+        <button onClick={onReanalyse} disabled={analysing} style={{padding:'11px 16px',borderRadius:10,fontSize:13,background:'var(--bg3)',color:'var(--text2)',border:'1px solid var(--border)',cursor:analysing?'not-allowed':'pointer'}}>
+          {analysing?'Analysing...':'Re-analyse'}
         </button>
       </div>
     </div>
   )
 }
+
 
 export default function MockPaper() {
   const { getToken } = useAuth()
