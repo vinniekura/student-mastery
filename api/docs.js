@@ -32,6 +32,21 @@ function sanitizeText(text) {
     .trim()
 }
 
+// Detect if a document is a handwritten solution/answer sheet — should be ignored
+function isHandwrittenSolution(filename, chunks) {
+  const name = (filename || '').toLowerCase()
+  const solutionKeywords = ['solution', 'answer', 'marking', 'mark scheme', 'worked', 'model answer']
+  if (solutionKeywords.some(k => name.includes(k))) return true
+  // Check first chunk for solution indicators
+  const firstChunk = (chunks?.[0] || '').toLowerCase()
+  const solutionPhrases = [
+    'test solution', 'mid unit solution', 'unit solution',
+    'question 1\na)', 'question 1\n(a)',
+    'marking guide', 'sample answer', 'suggested answer'
+  ]
+  return solutionPhrases.some(p => firstChunk.includes(p))
+}
+
 export default async function handler(req, res) {
   let userId
   try { userId = await requireAuth(req) }
@@ -51,21 +66,18 @@ export default async function handler(req, res) {
 
   try {
 
-    // GET /api/docs?subjectId=X — list docs without chunks
     if (method === 'GET' && !action) {
       const docs = await redisGet(docsKey) || []
       res.status(200).json({ docs: docs.map(({ chunks, ...rest }) => rest) })
       return
     }
 
-    // GET /api/docs?subjectId=X&action=scope — get saved scope
     if (method === 'GET' && action === 'scope') {
       const scope = await redisGet(scopeKey) || null
       res.status(200).json({ scope })
       return
     }
 
-    // DELETE /api/docs?subjectId=X&docId=Y — delete one doc
     if (method === 'DELETE' && params.get('docId')) {
       const docs = await redisGet(docsKey) || []
       await redisSet(docsKey, docs.filter(d => d.id !== params.get('docId')))
@@ -73,14 +85,12 @@ export default async function handler(req, res) {
       return
     }
 
-    // DELETE /api/docs?subjectId=X&action=scope — clear scope
     if (method === 'DELETE' && action === 'scope') {
       await redisSet(scopeKey, null)
       res.status(200).json({ ok: true })
       return
     }
 
-    // POST /api/docs?subjectId=X&action=scope — confirm scope
     if (method === 'POST' && action === 'scope') {
       const body = await parseBody(req)
       if (!body.confirmedScope) { res.status(400).json({ error: 'confirmedScope required' }); return }
@@ -90,7 +100,6 @@ export default async function handler(req, res) {
       return
     }
 
-    // POST /api/docs?subjectId=X&action=analyse — analyse all uploaded docs
     if (method === 'POST' && action === 'analyse') {
       const allDocs = await redisGet(docsKey) || []
       if (allDocs.length === 0) {
@@ -101,12 +110,22 @@ export default async function handler(req, res) {
       const subjects = await redisGet(`sm:subjects:${userId}`) || []
       const subject  = subjects.find(s => s.id === subjectId) || {}
 
-      // Sample text from all docs — sanitize every chunk
+      // Filter out handwritten solution sheets — only use question papers
+      const questionDocs = allDocs.filter(d => !isHandwrittenSolution(d.filename, d.chunks))
+      const ignoredDocs  = allDocs.filter(d => isHandwrittenSolution(d.filename, d.chunks))
+
+      if (ignoredDocs.length > 0) {
+        console.log(`Ignoring ${ignoredDocs.length} solution/handwriting docs: ${ignoredDocs.map(d=>d.filename).join(', ')}`)
+      }
+
+      const docsToAnalyse = questionDocs.length > 0 ? questionDocs : allDocs
+
+      // Sample text — prioritise question paper content
       let docSamples = ''
       let totalChars = 0
       const MAX_CHARS = 3000
 
-      for (const doc of allDocs) {
+      for (const doc of docsToAnalyse) {
         const label = `\n--- ${sanitizeText(doc.filename)} ---\n`
         docSamples += label
         totalChars += label.length
@@ -120,125 +139,96 @@ export default async function handler(req, res) {
         if (totalChars >= MAX_CHARS) break
       }
 
-      const docSummary = allDocs.map(d =>
-        `• ${sanitizeText(d.filename)} (${d.chunkCount || 0} sections, ${d.charCount || 0} chars)`
+      const docSummary = docsToAnalyse.map(d =>
+        `• ${sanitizeText(d.filename)} (${d.chunkCount || 0} sections)`
       ).join('\n')
 
-      const prompt = `You are analysing a student's uploaded study documents to extract the exam scope for mock paper generation.
+      const ignoredSummary = ignoredDocs.length > 0
+        ? `\nIgnored as solution/handwriting sheets: ${ignoredDocs.map(d=>sanitizeText(d.filename)).join(', ')}`
+        : ''
+
+      const prompt = `You are analysing a student's uploaded exam papers to extract the exam scope and format for mock paper generation.
 
 SUBJECT INFO: ${subject.name || 'Unknown'} | ${subject.examBoard || 'Unknown'} | Year ${subject.yearLevel || '?'} | ${subject.state || 'ACT'}
 
-DOCUMENTS UPLOADED (${allDocs.length} total):
-${docSummary}
+QUESTION PAPERS ANALYSED (${docsToAnalyse.length} total):
+${docSummary}${ignoredSummary}
 
-DOCUMENT CONTENT:
+DOCUMENT CONTENT SAMPLE:
 ${docSamples}
 
-Analyse ALL documents together. Extract:
+Analyse the question papers and extract:
 
-1. TERM / PERIOD — what assessment period do these docs cover (Term 1, Semester 1, etc.)
+1. TERM / PERIOD — what assessment period these papers cover
 
-2. EXAM TYPE — unit test, final exam, assignment, UCAT, GAMSAT, IELTS, AMC, bar exam, etc.
+2. EXAM TYPE — unit test, final exam, mid-unit test, assignment, UCAT, GAMSAT, etc.
 
-3. EXAM FORMAT — total marks, time allowed, section structure
+3. EXAM FORMAT — CRITICAL: look very carefully at the actual structure:
+   - Does this paper have Multiple Choice questions? (Look for A. B. C. D. options)
+   - Does this paper have ONLY long answer / multi-part questions like (a)(b)(c)(d)?
+   - What are the actual section names (if any)?
+   - Total marks, time allowed
 
-4. SPECIFIC SUB-TOPICS — this is the most important field.
-   List every SPECIFIC concept, technique, theorem, formula, or skill that appears as a distinct question type.
+4. SPECIFIC SUB-TOPICS — list every specific concept, technique, formula tested.
    Rules:
-   - One item per distinct question type — NOT broad headings
-   - Include the specific method or formula in the name
+   - One item per distinct question type
+   - Include the specific method/formula in the name
    - Aim for 8-15 specific items
-   - Read the actual questions carefully — every distinct question type becomes its own topic
+   BAD: ["Probability", "Statistics"] — too broad
+   GOOD: ["Uniform continuous distribution — P(X<k)", "Binomial distribution B(n,p)", "Poisson approximation to binomial", "Normal distribution — standardising Z=(X-μ)/σ", "Central limit theorem — sample means", "Hypothesis testing — p-value", "Confidence intervals — 95% CI", "Expected value E(X) and Var(X) for continuous distributions"]
 
-   BAD examples (too broad, useless for gap tracking):
-   ["Magnetic fields", "Calculus", "Algebra", "Statistics"]
+5. DIFFICULTY PROFILE — cognitive level, steps per problem, working required
 
-   GOOD examples — Physics:
-   ["Electric field strength E=V/d and force F=qE",
-    "Charged particle acceleration through potential difference ΔKE=qV",
-    "Kinetic energy of charged particles in eV and joules",
-    "Magnetic force on moving charges F=qvB",
-    "Circular motion of charged particles — radius r=mv/qB",
-    "Velocity selector — crossed E and B fields v=E/B",
-    "Solenoids — magnetic field B=μ₀NI/L",
-    "DC motors and torque on current-carrying loops",
-    "Force between parallel current-carrying wires F/L=μ₀I₁I₂/2πd",
-    "Gravitational field strength g=GM/r²",
-    "Orbital mechanics — circular orbit v=√(GM/r)",
-    "Gravitational potential energy and escape velocity"]
+6. CONFIDENCE in this analysis
 
-   GOOD examples — Mathematics:
-   ["Integration by substitution",
-    "Integration by parts",
-    "Product rule and chain rule differentiation",
-    "Newton's method for root finding",
-    "Matrix multiplication and inverse 2×2",
-    "Eigenvalues and eigenvectors",
-    "Geometric series — sum to infinity",
-    "Binomial theorem expansion",
-    "Normal distribution — finding P(X < k)",
-    "Hypothesis testing — t-test and p-values",
-    "Complex numbers in polar form — de Moivre's theorem",
-    "Proof by mathematical induction"]
+IMPORTANT FORMAT DETECTION:
+- If you see questions structured as "Question 1. [N Marks]" with parts (a)(b)(c) → hasMCQ: false, sectionType: "long-answer-only"
+- If you see "1. A. B. C. D." style questions → hasMCQ: true
+- Specialist Maths, Statistics, English, Law, GAMSAT Section 2 → almost always long-answer-only
+- Physics, Chemistry BSSS → usually has MCQ section
 
-   GOOD examples — Law:
-   ["Formation of contract — offer and acceptance",
-    "Promissory estoppel — elements and application",
-    "Negligence — duty of care Donoghue v Stevenson",
-    "Causation — but-for test and remoteness",
-    "Equitable remedies — specific performance vs damages",
-    "Statutory interpretation — purposive approach"]
-
-   GOOD examples — GAMSAT Section 3:
-   ["Enzyme kinetics — Michaelis-Menten equation",
-    "Acid-base equilibrium — Henderson-Hasselbalch",
-    "Genetics — Hardy-Weinberg equilibrium",
-    "Thermodynamics — Gibbs free energy ΔG=ΔH-TΔS",
-    "Electrochemistry — cell potential and Nernst equation",
-    "Optics — lens equation and magnification"]
-
-5. DIFFICULTY PROFILE — analyse the actual questions:
-   - Cognitive level: recall / apply / analyse / evaluate
-   - Steps per calculation: 1-2 / 2-3 / 3-5
-   - Working required: yes/no
-   - Marks per question: typical range
-
-6. CONFIDENCE — how confident you are in this analysis and why
-
-Return ONLY valid JSON, no markdown, no explanation:
+Return ONLY valid JSON, no markdown:
 {
-  "subject": "Physics",
+  "subject": "Specialist Mathematics",
   "levelDescription": "Year 12 BSSS ACT",
-  "term": "Term 1",
-  "termOptions": ["Term 1", "Term 2", "Term 3", "Term 4"],
-  "examType": "unit test",
-  "examTypeOptions": ["unit test", "final exam", "assignment", "UCAT", "GAMSAT", "IELTS", "AMC", "bar exam", "CPA"],
+  "term": "SMO5 Statistics and Statistics Extension",
+  "termOptions": ["SMO5 Statistics", "SMO4", "SMO3", "Semester 1", "Semester 2"],
+  "examType": "mid unit test",
+  "examTypeOptions": ["unit test", "mid unit test", "final exam", "assignment", "UCAT", "GAMSAT", "IELTS"],
+  "hasMCQ": false,
+  "sectionType": "long-answer-only",
   "topics": [
-    "Electric field strength E=V/d and force F=qE",
-    "Charged particle acceleration through potential difference",
-    "Magnetic force on moving charges F=qvB",
-    "Circular motion of charged particles r=mv/qB",
-    "Velocity selector v=E/B",
-    "Gravitational field strength g=GM/r²",
-    "Orbital mechanics circular orbit v=√(GM/r)"
+    "Uniform continuous distribution — P(X<k) and E(X)",
+    "Probability density function — finding constants and sketching f(x)",
+    "Cumulative distribution function F(x) — defining and using",
+    "Binomial distribution B(n,p) — calculating exact probabilities",
+    "Poisson distribution Po(λ) — approximation and exact probabilities",
+    "Normal distribution — standardising Z=(X-μ)/σ and finding P(X<k)",
+    "Central limit theorem — distribution of sample means",
+    "Expected value E(aX+b) and Variance Var(aX+b)",
+    "Percentiles — finding x given P(X<x)=p",
+    "Hypothesis testing — null hypothesis, p-value, conclusion"
   ],
   "format": {
-    "totalMarks": 61,
-    "timeMins": 60,
-    "sections": ["Section A: 10 MCQ (10 marks)", "Section B: Short answer (51 marks)"]
+    "totalMarks": 77,
+    "timeMins": 55,
+    "sections": ["Long answer questions — 77 marks total"],
+    "questionStructure": "Multi-part questions with (a)(b)(c)(d) sub-parts. Marks shown in [N Marks] format.",
+    "noMCQ": true
   },
   "curriculum": "BSSS",
   "difficultyProfile": {
     "level": "standard",
-    "description": "Multi-step calculations with working required. Mix of recall MCQ and application short answer.",
+    "description": "Multi-step probability calculations, sketch graphs, define CDF. Mix of recall and application.",
     "cognitiveLevel": "apply",
     "stepsPerCalculation": "2-4",
     "workingRequired": true,
-    "marksPerQuestion": "1-5"
+    "marksPerQuestion": "9-14"
   },
+  "ignoredDocs": ["download (64).pdf", "download (65).pdf"],
   "confidence": "high",
-  "confidenceReason": "Two past papers clearly show Fields unit content with electric, magnetic and gravitational questions",
-  "summaryLine": "Term 1 · Fields · BSSS · 60 min unit test"
+  "confidenceReason": "Two question papers clearly show Statistics unit with probability distributions, no MCQ section",
+  "summaryLine": "SMO5 Statistics · Mid Unit Test · BSSS · 55 min · 77 marks · Long answer only"
 }`
 
       const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
@@ -250,7 +240,7 @@ Return ONLY valid JSON, no markdown, no explanation:
         },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1200,
+          max_tokens: 1400,
           messages: [
             { role: 'user', content: prompt },
             { role: 'assistant', content: '{' }
@@ -269,10 +259,11 @@ Return ONLY valid JSON, no markdown, no explanation:
 
       const scope = {
         ...analysis,
-        docCount: allDocs.length,
-        docNames: allDocs.map(d => sanitizeText(d.filename)),
+        docCount: docsToAnalyse.length,
+        docNames: docsToAnalyse.map(d => sanitizeText(d.filename)),
+        ignoredDocNames: ignoredDocs.map(d => sanitizeText(d.filename)),
         analysedAt: new Date().toISOString(),
-        confirmed: false
+        confirmed: false  // must be confirmed by user before generating
       }
 
       await redisSet(scopeKey, scope)

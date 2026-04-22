@@ -384,12 +384,20 @@ export default async function handler(req, res) {
       ? `\nPAPER MEMORY — Already covered: ${coveredTopics.join(', ')}.\nMUST prioritise these gap topics in this paper: ${gapTopics.length>0 ? gapTopics.join(', ') : 'fresh angles on all topics'}.`
       : ''
 
+    // Format flags from scope — respect what was detected from past papers
+    const hasMCQ       = confirmedScope?.hasMCQ !== false  // default true unless explicitly false
+    const sectionType  = confirmedScope?.sectionType || 'mcq-and-long-answer'
+    const longAnswerOnly = !hasMCQ || sectionType === 'long-answer-only'
+    const questionStructure = confirmedScope?.format?.questionStructure || ''
+
     const ctx = `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
 Difficulty: ${diffNote}${customInstructions?`\nFocus: ${customInstructions}`:''}${memoryNote}${docContext?`\nPast paper reference:\n${docContext.slice(0,600)}`:''}`
 
-    // ── CALL 1: MCQ ──────────────────────────────────────────────────────────
-    const mcqText = await callClaude(sys,
+    // ── CALL 1: MCQ (only if format has MCQ) ─────────────────────────────────
+    let mcqQs = []
+    if (!longAnswerOnly) {
+      const mcqText = await callClaude(sys,
 `${ctx}
 
 Generate exactly 10 multiple choice questions for a ${examBoard} ${name} exam.
@@ -402,36 +410,42 @@ Rules:
 
 Return ONLY a valid JSON array — no preamble, no markdown:
 [{"number":1,"question":"Full question text with ALL given values","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"B","topic":"Topic name","workingOut":"Solution"}]`, 3500)
+      mcqQs = extractJsonArray(mcqText) || []
+    } else {
+      console.log(`Paper ${slotNumber}: long-answer-only format — skipping MCQ call`)
+    }
 
-    let mcqQs = extractJsonArray(mcqText) || []
+    // ── CALL 2: Short answer WITH diagrams (or long-answer format) ───────────
+    const saPromptFormat = longAnswerOnly
+      ? `Generate exactly 2 long answer questions matching the EXACT format of the past papers.
+CRITICAL FORMAT RULES:
+- Multi-part questions with sub-parts labelled (a)(b)(c)(d)(e)
+- Marks shown per sub-part e.g. [2 marks]  
+- Total marks per question: 9-14 marks
+- NO multiple choice options — pure written working required
+- Question introduces a scenario/distribution, sub-parts build progressively
+- Include ALL given values in the question stem or sub-part${questionStructure ? `\n- Style: ${questionStructure}` : ''}`
+      : `Generate exactly 2 short answer questions. At least ONE must include a diagram.
+CRITICAL RULES:
+- Every calculation sub-part MUST include ALL given values in the question text
+- Each question: 3-4 sub-parts (a,b,c,d), total 8-12 marks
+- Parts must build — part b uses result from part a
+- Diagram types: "parallel-plates","magnetic-field","gravitational-field","two-charges","free-body","circuit","wave"`
 
-    // ── CALL 2: Short answer WITH diagrams ───────────────────────────────────
     const saText = await callClaude(sys,
 `${ctx}
 
-Generate exactly 2 short answer questions for a ${examBoard} ${name} exam.
-CRITICAL RULES:
-- Every calculation sub-part MUST include ALL given values (voltage, separation, mass, charge, field strength etc.) in the question text itself — never assume the student has them
-- At least ONE question MUST include a diagram
-- Each question: 3-4 sub-parts (a,b,c,d), total 8-12 marks
-- Parts must build — part b uses result from part a
-
-Diagram types: "parallel-plates", "magnetic-field", "gravitational-field", "two-charges", "free-body", "circuit", "wave"
+${saPromptFormat}
 
 Return ONLY a valid JSON array:
 [{
-  "number":11,
-  "question":"Full scenario with ALL given numerical values stated here",
+  "number":${mcqQs.length+1},
+  "question":"Full scenario with ALL given values",
   "topic":"Topic name",
   "marks":10,
-  "diagram":{
-    "type":"parallel-plates",
-    "description":"Two horizontal plates separated by 4.0 cm. Upper plate positive (+), lower plate negative (−). Electron at lower plate.",
-    "params":{"separation":"4.0 cm","voltage":"600 V","particleCharge":"negative","topPlatePolarity":"positive"}
-  },
   "parts":[{
     "part":"a",
-    "question":"Sub-question with any additional given values needed",
+    "question":"Sub-question with any additional given values",
     "marks":2,
     "answer":"Full worked solution with units",
     "markingCriteria":"Award 1 mark for [X]. Award 1 mark for [Y]."
@@ -460,6 +474,25 @@ Return ONLY a valid JSON array:
     const saMarks  = saQs.reduce((s,q)=>s+(q.marks||10),0)
     const total    = mcqMarks + saMarks
 
+    // Build sections based on detected format
+    const sections = []
+    if (!longAnswerOnly && mcqQs.length > 0) {
+      sections.push({
+        name: 'Section A: Multiple Choice', type: 'mcq', marks: mcqMarks,
+        instructions: 'Circle the letter of the best answer. Each question is worth 1 mark.',
+        questions: mcqQs.map(q=>({...q, type:'mcq', marks:1, parts:null,
+          markingCriteria:`Award 1 mark for ${q.answer}`}))
+      })
+    }
+    sections.push({
+      name: longAnswerOnly ? 'Questions' : 'Section B: Short Answer',
+      type: 'short', marks: saMarks,
+      instructions: longAnswerOnly
+        ? 'Answer ALL questions. Show all working clearly. Marks allocated are shown in brackets.'
+        : 'Answer ALL questions in the spaces provided. Show all working clearly.',
+      questions: saQs.map(q=>({...q, type:'short'}))
+    })
+
     const paper = {
       coverPage: {
         school: 'Narrabundah College', subject: name, level: levelDesc,
@@ -469,29 +502,18 @@ Return ONLY a valid JSON array:
           'Write in black or blue pen only',
           'Show all working clearly for full marks',
           'Scientific calculator permitted',
-          'Phones and all electronic devices must be away'
+          longAnswerOnly ? 'Round answers to 3 decimal places where appropriate' : 'Phones and all electronic devices must be away'
         ]
       },
       title: `${name} — Mock Paper ${slotNumber}${scopeTerm?` (${scopeTerm})`:''}`,
       subject: name, levelDescription: levelDesc, examBoard,
       scopeTerm: scopeTerm||null, scopeExamType: scopeType, difficultyMode,
+      hasMCQ: !longAnswerOnly,
       totalMarks: total,
       timeAllowed: confirmedScope?.format?.timeMins ? `${confirmedScope.format.timeMins} minutes` : '60 minutes',
       allowedMaterials: 'Scientific calculator, ruler',
       diagrams: allDiagrams,
-      sections: [
-        {
-          name: 'Section A: Multiple Choice', type: 'mcq', marks: mcqMarks,
-          instructions: 'Circle the letter of the best answer. Each question is worth 1 mark.',
-          questions: mcqQs.map(q=>({...q, type:'mcq', marks:1, parts:null,
-            markingCriteria:`Award 1 mark for ${q.answer}`}))
-        },
-        {
-          name: 'Section B: Short Answer', type: 'short', marks: saMarks,
-          instructions: 'Answer ALL questions in the spaces provided. Show all working clearly.',
-          questions: saQs.map(q=>({...q, type:'short'}))
-        }
-      ]
+      sections
     }
 
     // Update progress to 50%
@@ -501,25 +523,41 @@ Return ONLY a valid JSON array:
 
     console.log(`Paper ${slotNumber} 50% — starting calls 3+4...`)
 
-    // ── CALL 3: SA Q3+Q4 ─────────────────────────────────────────────────────
+    // ── CALL 3: Q3+Q4 (format-aware) ─────────────────────────────────────────
     const existingQCount = (paper.sections||[]).flatMap(s=>s.questions||[]).length
+    const diffStr = difficultyMode==='harder'?'~20% harder than past papers':difficultyMode==='exam-plus'?'Maximum difficulty — multi-concept synthesis':'Match past paper difficulty exactly'
 
-    const call3Text = await callClaude(sys,
-`Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+    const call3Prompt = longAnswerOnly
+      ? `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
-Difficulty: ${difficultyMode==='harder'?'~20% harder than past papers':difficultyMode==='exam-plus'?'Maximum difficulty — multi-concept synthesis':'Match past paper difficulty exactly'}${memoryNote}
+Difficulty: ${diffStr}${memoryNote}
 
-Generate exactly 2 more short answer questions (different topics from SA Q1-Q2 already generated).
+Generate exactly 2 more long answer questions (different topics from Q1-Q2 already generated).
+CRITICAL FORMAT — match the past paper style exactly:
+- Multi-part questions with sub-parts (a)(b)(c)(d)(e)
+- Marks shown per sub-part in square brackets [N marks]
+- Total marks per question: 9-14 marks
+- NO multiple choice — pure written working
+- ALL given values included in question stem or sub-part${questionStructure?`\n- Style: ${questionStructure}`:''}
+
+Return ONLY valid JSON array:
+[{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":12,"parts":[{"part":"a","question":"Sub-question","marks":2,"answer":"Full solution","markingCriteria":"Award marks for..."}]}]`
+      : `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${diffStr}${memoryNote}
+
+Generate exactly 2 more short answer questions (different topics from Q1-Q2).
 RULES:
 - ALL given values must be in the question text
 - Each question: 3-4 sub-parts, 8-12 marks total
-- Include a diagram if relevant
+- Include a diagram if relevant to subject
 - Parts build — part b uses result from part a
-
 Diagram types: "parallel-plates","magnetic-field","gravitational-field","two-charges","free-body"
 
 Return ONLY valid JSON array:
-[{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":10,"diagram":{"type":"gravitational-field","description":"g vs distance graph","params":{"bodyName":"Earth","surfaceG":"9.8"}},"parts":[{"part":"a","question":"Sub-question","marks":3,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`, 2800)
+[{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":10,"diagram":{"type":"gravitational-field","description":"g vs distance graph","params":{"bodyName":"Earth","surfaceG":"9.8"}},"parts":[{"part":"a","question":"Sub-question","marks":3,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`
+
+    const call3Text = await callClaude(sys, call3Prompt, 2800)
 
     let saQs2 = extractJsonArray(call3Text)||[]
     saQs2 = saQs2.map((q,i)=>({...q, number:existingQCount+i+1}))
@@ -528,7 +566,7 @@ Return ONLY valid JSON array:
       return q
     })
 
-    // Add to Section B
+    // Add to main questions section
     const sectionB = paper.sections?.find(s=>s.type==='short')
     if(sectionB){ sectionB.questions=[...(sectionB.questions||[]),...saQs2]; sectionB.marks=sectionB.questions.reduce((s,q)=>s+(q.marks||0),0) }
 
@@ -537,44 +575,58 @@ Return ONLY valid JSON array:
     const p75i = p75.findIndex(p=>p.id===jobId)
     if(p75i>=0){ p75[p75i].progress=75; p75[p75i].paper=paper; await redisSet(paperKey,p75) }
 
-    console.log(`Paper ${slotNumber} 75% — starting call 4 (extended response)...`)
+    console.log(`Paper ${slotNumber} 75% — starting call 4...`)
 
-    // ── CALL 4: Section C Extended Response ──────────────────────────────────
+    // ── CALL 4: Extended/hardest question (format-aware) ─────────────────────
     const totalQSoFar = existingQCount + saQs2.length
 
-    const call4Text = await callClaude(sys,
-`Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+    const call4Prompt = longAnswerOnly
+      ? `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${difficultyMode==='exam-plus'?'Maximum difficulty':'Match past paper difficulty'}
+
+Generate exactly 1 harder multi-part question — the most challenging question in the paper.
+Synthesis of 2-3 concepts, 12-16 marks, 5-6 sub-parts (a)(b)(c)(d)(e)(f).
+Final part must require evaluation, interpretation, or multi-step reasoning.
+ALL given values in question stem. NO multiple choice.${questionStructure?`\nStyle: ${questionStructure}`:''}
+
+Return ONLY valid JSON array with ONE question:
+[{"number":${totalQSoFar+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":14,"parts":[{"part":"a","question":"First sub-part","marks":2,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`
+      : `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
 Difficulty: ${difficultyMode==='exam-plus'?'Maximum — multi-concept synthesis, 3+ steps':'Match past paper difficulty'}
 
 Generate exactly 1 extended response question for Section C.
-This is the hardest question — synthesis of 2-3 concepts, 15-20 marks, 5-6 sub-parts.
-For Physics: velocity selector (crossed E and B fields), OR orbital mechanics + circular motion, OR solenoid + force on conductor.
-For other subjects: choose the most complex synthesis topic from the scope.
-RULES:
-- Include ALL given values in question stem
-- Include diagram if relevant
-- Parts a-f build progressively
-- Final part requires evaluation or analysis, not just calculation
+Hardest question — synthesis of 2-3 concepts, 15-20 marks, 5-6 sub-parts.
+For Physics: velocity selector, orbital mechanics+circular motion, OR solenoid+force.
+For other subjects: most complex synthesis topic.
+RULES: ALL given values in stem, include diagram if relevant, parts a-f build progressively, final part = evaluation.
 
 Return ONLY valid JSON array with ONE question:
-[{"number":${totalQSoFar+1},"question":"Full extended scenario with ALL given values","topic":"Topic","marks":18,"isExtended":true,"diagram":{"type":"parallel-plates","description":"Velocity selector setup","params":{"separation":"3.0 cm","voltage":"4500 V","particleCharge":"positive","topPlatePolarity":"positive"}},"parts":[{"part":"a","question":"First sub-part","marks":2,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`, 3000)
+[{"number":${totalQSoFar+1},"question":"Full extended scenario with ALL given values","topic":"Topic","marks":18,"isExtended":true,"diagram":{"type":"parallel-plates","description":"Velocity selector setup","params":{"separation":"3.0 cm","voltage":"4500 V","particleCharge":"positive","topPlatePolarity":"positive"}},"parts":[{"part":"a","question":"First sub-part","marks":2,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`
+
+    const call4Text = await callClaude(sys, call4Prompt, 3000)
 
     let extQs = extractJsonArray(call4Text)||[]
-    extQs = extQs.map((q,i)=>({...q, number:totalQSoFar+i+1, isExtended:true}))
+    extQs = extQs.map((q,i)=>({...q, number:totalQSoFar+i+1, isExtended:!longAnswerOnly}))
     extQs = extQs.map(q=>{
       if(q.diagram){ const svg=renderDiagramSVG(q.diagram); if(svg) return{...q,diagram:{...q.diagram,svg}} }
       return q
     })
 
-    // Add Section C
+    // Add Section C for MCQ papers, or merge into questions for long-answer papers
     if(extQs.length>0){
-      paper.sections=[...(paper.sections||[]),{
-        name:'Section C: Extended Response', type:'extended',
-        marks:extQs.reduce((s,q)=>s+(q.marks||0),0),
-        instructions:'Answer ALL questions. Show all working clearly. Marks are awarded for correct method and working.',
-        questions:extQs
-      }]
+      if(longAnswerOnly){
+        // Just add to the single questions section
+        if(sectionB){ sectionB.questions=[...(sectionB.questions||[]),...extQs]; sectionB.marks=sectionB.questions.reduce((s,q)=>s+(q.marks||0),0) }
+      } else {
+        paper.sections=[...(paper.sections||[]),{
+          name:'Section C: Extended Response', type:'extended',
+          marks:extQs.reduce((s,q)=>s+(q.marks||0),0),
+          instructions:'Answer ALL questions. Show all working clearly. Marks are awarded for correct method and working.',
+          questions:extQs
+        }]
+      }
     }
 
     // Final total
@@ -586,6 +638,24 @@ Return ONLY valid JSON array with ONE question:
       (paper.sections||[]).flatMap(s=>s.questions||[]).map(q=>q.topic).filter(Boolean)
     )]
 
+    // Build comparison metadata for post-generation scorecard
+    const allScopeTopics = scopeTopics || []
+    const coveredInThisPaper = [...new Set(
+      (paper.sections||[]).flatMap(s=>s.questions||[]).map(q=>q.topic).filter(Boolean)
+    )]
+    const formatMatch = {
+      hasMCQ: !longAnswerOnly,
+      expectedMCQ: !longAnswerOnly,
+      sectionCount: (paper.sections||[]).length,
+      totalMarks: finalTotal,
+      expectedMarks: confirmedScope?.format?.totalMarks || finalTotal,
+    }
+    const topicCoveragePercent = allScopeTopics.length > 0
+      ? Math.round((coveredInThisPaper.filter(t => allScopeTopics.some(s=>s.toLowerCase().includes(t.toLowerCase().slice(0,8)))).length / allScopeTopics.length) * 100)
+      : 100
+    const formatMatchPercent = formatMatch.hasMCQ === formatMatch.expectedMCQ ? 100 : 60
+    const overallMatch = Math.round((topicCoveragePercent * 0.6) + (formatMatchPercent * 0.4))
+
     // Save as READY at 100%
     const record = {
       id:jobId, slotNumber, subjectId, subjectName:name,
@@ -593,7 +663,16 @@ Return ONLY valid JSON array with ONE question:
       scopeTerm:scopeTerm||null, scopeExamType:scopeType, difficultyMode,
       generatedAt:new Date().toISOString(), completedAt:new Date().toISOString(),
       sourceType:allDocs.length>0?'docs':'syllabus', docCount:allDocs.length,
-      topicsCovered, status:'ready', progress:100, paper
+      topicsCovered:coveredInThisPaper, status:'ready', progress:100, paper,
+      comparison: {
+        overallMatch,
+        topicCoveragePercent,
+        formatMatchPercent,
+        formatMatch,
+        coveredTopics: coveredInThisPaper,
+        gapTopics: allScopeTopics.filter(t => !coveredInThisPaper.some(c=>c.toLowerCase().includes(t.toLowerCase().slice(0,8)))),
+        strikeRate: overallMatch >= 90 ? '90%+ match' : overallMatch >= 80 ? '80%+ match' : `${overallMatch}% match`
+      }
     }
 
     const finalPapers = await redisGet(paperKey)||[]

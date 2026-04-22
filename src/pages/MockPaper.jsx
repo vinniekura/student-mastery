@@ -367,20 +367,72 @@ export default function MockPaper() {
   const sel = { width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', appearance: 'none' }
 
   if (viewingPaper) {
-    const { paper, sourceType, slotNumber, topicsCovered } = viewingPaper
+    const { paper, sourceType, slotNumber, topicsCovered, comparison } = viewingPaper
     const src = SOURCE_LABELS[sourceType] || SOURCE_LABELS.syllabus
     return (
       <div style={{ maxWidth: 900 }}>
         <style>{`@media print{.no-print{display:none!important}}`}</style>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 24, alignItems: 'center' }} className="no-print">
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center' }} className="no-print">
           <button onClick={() => setViewingPaper(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 20, background: src.bg, color: src.color, border: `1px solid ${src.border}` }}>{src.label}</span>
             {paper.scopeTerm && <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 20, background: 'var(--teal-bg)', color: 'var(--teal2)', border: '1px solid var(--teal-border)' }}>📋 {paper.scopeTerm}</span>}
-            {topicsCovered?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text3)' }}>{topicsCovered.slice(0, 5).join(' · ')}{topicsCovered.length > 5 ? ` +${topicsCovered.length - 5}` : ''}</span>}
           </div>
           <button onClick={() => window.print()} className="no-print" style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>Print</button>
         </div>
+
+        {/* Comparison scorecard — shown before the paper */}
+        {comparison && (
+          <div className="no-print" style={{ background: 'var(--bg2)', border: `1px solid ${comparison.overallMatch >= 90 ? 'rgba(16,185,129,0.3)' : 'rgba(217,119,6,0.3)'}`, borderRadius: 14, padding: '18px 22px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>How this paper compares to your past papers</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Based on {viewingPaper.docCount || 'uploaded'} past paper{viewingPaper.docCount !== 1 ? 's' : ''} analysed</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 36, fontWeight: 700, color: comparison.overallMatch >= 90 ? '#10b981' : '#d97706', lineHeight: 1 }}>{comparison.overallMatch}%</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{comparison.strikeRate}</div>
+              </div>
+            </div>
+            {/* 3 metric bars */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+              {[
+                { label: 'Topic coverage', value: comparison.topicCoveragePercent, color: '#10b981' },
+                { label: 'Format match', value: comparison.formatMatchPercent, color: '#2563eb' },
+              ].map(({ label, value, color }) => (
+                <div key={label}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>
+                    <span>{label}</span><span style={{ fontWeight: 600 }}>{value}%</span>
+                  </div>
+                  <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${value}%`, background: color, borderRadius: 3 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Covered topics */}
+            {comparison.coveredTopics?.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 5 }}>Topics covered in this paper:</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {comparison.coveredTopics.map(t => (
+                    <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' }}>✓ {t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Gap topics */}
+            {comparison.gapTopics?.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 5 }}>Topics queued for next paper:</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {comparison.gapTopics.map(t => (
+                    <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.25)', color: '#d97706' }}>→ {t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ background: 'var(--bg2)', border: '2px solid var(--border)', borderRadius: 14, padding: '36px 40px', marginBottom: 16 }}>
           <div style={{ textAlign: 'center', borderBottom: '3px double var(--border)', paddingBottom: 20, marginBottom: 20 }}>
@@ -717,16 +769,26 @@ export default function MockPaper() {
                         {isReady && (
                           <>
                             <div style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(paper.completedAt || paper.generatedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
-                            {paper.scopeTerm && <div style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'var(--teal-bg)', color: 'var(--teal2)', border: '1px solid var(--teal-border)', display: 'inline-block', alignSelf: 'flex-start' }}>{paper.scopeTerm}</div>}
-                            {paper.topicsCovered?.length > 0 && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                                {paper.topicsCovered.slice(0,4).map(t => (
-                                  <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' }}>✓ {t.length > 18 ? t.slice(0,18)+'…' : t}</span>
-                                ))}
-                                {paper.topicsCovered.length > 4 && <span style={{ fontSize: 9, color: 'var(--text3)' }}>+{paper.topicsCovered.length-4}</span>}
+                            {/* Comparison badge */}
+                            {paper.comparison?.overallMatch && (
+                              <div style={{
+                                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
+                                background: paper.comparison.overallMatch >= 90 ? 'rgba(16,185,129,0.15)' : 'rgba(217,119,6,0.15)',
+                                color: paper.comparison.overallMatch >= 90 ? '#10b981' : '#d97706',
+                                border: `1px solid ${paper.comparison.overallMatch >= 90 ? 'rgba(16,185,129,0.3)' : 'rgba(217,119,6,0.3)'}`,
+                                alignSelf: 'flex-start'
+                              }}>
+                                {paper.comparison.overallMatch >= 90 ? '🎯 ' : ''}{paper.comparison.overallMatch}% match
                               </div>
                             )}
-                            {(() => { const s = SOURCE_LABELS[paper.sourceType] || SOURCE_LABELS.syllabus; return <div style={{ fontSize: 10, padding: '2px 7px', borderRadius: 10, display: 'inline-block', alignSelf: 'flex-start', background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>{s.label}</div> })()}
+                            {paper.topicsCovered?.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                                {paper.topicsCovered.slice(0,3).map(t => (
+                                  <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' }}>✓ {t.length > 16 ? t.slice(0,16)+'…' : t}</span>
+                                ))}
+                                {paper.topicsCovered.length > 3 && <span style={{ fontSize: 9, color: 'var(--text3)' }}>+{paper.topicsCovered.length-3}</span>}
+                              </div>
+                            )}
                             <div style={{ display: 'flex', gap: 5, marginTop: 'auto' }}>
                               <button onClick={() => setViewingPaper({ ...paper, subjectName: selectedSubject?.name })} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>View</button>
                               <button onClick={() => setConfirmReplace(slot)} disabled={submitting} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text2)', cursor: 'pointer' }}>Redo</button>
