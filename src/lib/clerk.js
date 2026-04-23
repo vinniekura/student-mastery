@@ -17,16 +17,16 @@ function decodeJwtUserId(token) {
     const parts = token.split('.')
     if (parts.length !== 3) throw new Error('Invalid JWT structure')
     
-    // Use atob for base64url decoding (works in Node.js 15+)
     let payload = parts[1]
     payload = payload.replace(/-/g, '+').replace(/_/g, '/')
     const padded = payload + '='.repeat((4 - payload.length % 4) % 4)
     
-    // Use atob instead of Buffer
-    const decoded = JSON.parse(atob(padded))
+    // Decode base64 - works in Vercel Node.js environment
+    const decoded = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
     if (!decoded.sub) throw new Error('No sub in token')
     return decoded.sub
   } catch (e) {
+    console.error('JWT decode error:', e)
     throw new Error(`Invalid token: ${e.message}`)
   }
 }
