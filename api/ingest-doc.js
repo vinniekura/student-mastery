@@ -3,8 +3,8 @@
 // NO unit selection required — auto-detects document role and metadata
 // Fixes: multi-part form handling, large files, encoding issues
 
-import { redisGet, redisSet } from './lib/redis.js'
-import { requireAuth } from './lib/clerk.js'
+import { redisGet, redisSet } from '../src/lib/redis.js'
+import { requireAuth } from '../src/lib/clerk.js'
 
 function genId() {
   return Math.random().toString(36).slice(2, 10)

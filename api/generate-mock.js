@@ -2,8 +2,8 @@
 // Validates subject + confirmed scope, creates paper record, dispatches to mock-worker
 // Fixed: proper error handling, scope validation, paper record creation before worker call
 
-import { redisGet, redisSet } from './lib/redis.js'
-import { requireAuth } from './lib/clerk.js'
+import { redisGet, redisSet } from '../src/lib/redis.js'
+import { requireAuth } from '../src/lib/clerk.js'
 
 function genId() {
   return Math.random().toString(36).slice(2, 10)

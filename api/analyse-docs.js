@@ -2,8 +2,8 @@
 // Analyses all uploaded docs for a subject → extracts exact exam format + topics
 // Returns human-readable feedback card + structured scope for mock generation
 
-import { redisGet, redisSet } from './lib/redis.js'
-import { requireAuth } from './lib/clerk.js'
+import { redisGet, redisSet } from '../src/lib/redis.js'
+import { requireAuth } from '../src/lib/clerk.js'
 
 function sanitize(text) {
   if (!text) return ''

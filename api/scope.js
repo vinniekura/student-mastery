@@ -2,8 +2,8 @@
 // GET: retrieve confirmed scope for a subject
 // POST: save/update confirmed scope
 
-import { redisGet, redisSet } from './lib/redis.js'
-import { requireAuth } from './lib/clerk.js'
+import { redisGet, redisSet } from '../src/lib/redis.js'
+import { requireAuth } from '../src/lib/clerk.js'
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {

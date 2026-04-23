@@ -2,7 +2,7 @@
 // Generates a mock paper that EXACTLY matches the format of real past papers
 // Uses confirmedScope from analyse-docs for question counts, section structure, topics
 
-import { redisGet, redisSet } from './lib/redis.js'
+import { redisGet, redisSet } from '../src/lib/redis.js'
 
 function sanitize(text) {
   if (!text) return ''
