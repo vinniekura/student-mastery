@@ -1,6 +1,6 @@
 // src/pages/MockPaper.jsx
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useSubjectStore } from '../store/subjects'
+import { useSubjectsStore } from '../store/subjects'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -454,7 +454,7 @@ function UploadArea({ subjectId, onUploadComplete }) {
 // ── Main MockPaper Page ────────────────────────────────────────────────────────
 
 export default function MockPaper() {
-  const { subjects, loadSubjects } = useSubjectStore()
+  const { subjects, loadSubjects } = useSubjectsStore()
   const [selectedSubjectId, setSelectedSubjectId] = useState('')
   const [docs, setDocs] = useState([])
   const [scope, setScope] = useState(null)
