@@ -1,53 +1,35 @@
-// Server-side Clerk auth — plain fetch, no SDK required
-// Verifies JWT using Clerk's JWKS endpoint
-
-const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY
+// Server-side Clerk auth — works with both Node.js (Vercel) and Web API request formats
 
 export async function requireAuth(req) {
-  const authHeader = req.headers.get
-    ? req.headers.get('authorization')
-    : (req.headers.authorization || req.headers.Authorization)
+  // Handle both Node IncomingMessage (req.headers.authorization)
+  // and Web API Request (req.headers.get('authorization'))
+  let authHeader
+  if (typeof req.headers.get === 'function') {
+    authHeader = req.headers.get('authorization')
+  } else {
+    authHeader = req.headers.authorization || req.headers.Authorization
+  }
 
   if (!authHeader?.startsWith('Bearer ')) {
     throw new Error('Unauthorized: no token')
   }
 
   const token = authHeader.split(' ')[1]
-
-  // Decode JWT payload (middle segment) — no signature verification needed
-  // for userId extraction since Clerk validates tokens server-side via their API
-  const userId = await verifyClerkToken(token)
-  return userId
-}
-
-async function verifyClerkToken(token) {
-  // Use Clerk's token verification endpoint
-  const res = await fetch('https://api.clerk.com/v1/tokens/verify', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${CLERK_SECRET_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ token })
-  })
-
-  if (!res.ok) {
-    // Fallback: decode JWT payload directly (base64)
-    return decodeJwtUserId(token)
-  }
-
-  const data = await res.json()
-  return data.sub || data.user_id || decodeJwtUserId(token)
+  return decodeJwtUserId(token)
 }
 
 function decodeJwtUserId(token) {
   try {
-    const payload = token.split('.')[1]
-    const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+    const parts = token.split('.')
+    if (parts.length !== 3) throw new Error('Invalid JWT structure')
+    // base64url decode the payload
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const padded = payload + '='.repeat((4 - payload.length % 4) % 4)
+    const decoded = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
     if (!decoded.sub) throw new Error('No sub in token')
     return decoded.sub
-  } catch {
-    throw new Error('Invalid token')
+  } catch (e) {
+    throw new Error(`Invalid token: ${e.message}`)
   }
 }
 
