@@ -16,7 +16,5 @@
   "regions": ["syd1"],
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" },
-    { "source": "/api/mock-section", "destination": "/api/mock-section.js" },
-    { "source": "/api/mock-assemble", "destination": "/api/mock-assemble.js" }
-  ]
+      ]
 }
