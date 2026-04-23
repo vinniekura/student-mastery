@@ -1,912 +1,815 @@
-import { useState, useEffect, useRef } from 'react'
-import { useAuth } from '@clerk/clerk-react'
-import { useSubjectsStore } from '../store/subjects.js'
+// src/pages/MockPaper.jsx
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSubjectStore } from '../store/subjects'
 
-const SOURCE_LABELS = {
-  docs:         { label: 'From your notes',  color: 'var(--teal2)', bg: 'var(--teal-bg)', border: 'var(--teal-border)' },
-  'past-paper': { label: 'From past papers', color: '#7c3aed',      bg: 'rgba(124,58,237,0.1)', border: 'rgba(124,58,237,0.2)' },
-  syllabus:     { label: 'Syllabus',         color: 'var(--text2)', bg: 'var(--bg3)',      border: 'var(--border)' }
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function SectionBadge({ type }) {
+  const t = (type || '').toLowerCase()
+  const color = t.includes('multiple') || t.includes('mcq') ? 'bg-teal-900 text-teal-300' :
+    t.includes('extended') || t.includes('essay') ? 'bg-purple-900 text-purple-300' :
+    'bg-blue-900 text-blue-300'
+  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>{type}</span>
 }
 
-const STATUS_CONFIG = {
-  queued:     { label: 'Queued',      sublabel: 'Starting soon...',      color: '#d97706', spin: false, pulse: true  },
-  generating: { label: 'Generating', sublabel: 'Writing your paper...', color: 'var(--teal2)', spin: true, pulse: false },
-  failed:     { label: 'Failed',     sublabel: 'Tap to retry',          color: 'var(--red)', spin: false, pulse: false },
-  ready: null
-}
-
-function renderQuestionText(text, diagrams) {
-  if (!text) return null
-  const parts = []
-  let remaining = text
-  while (remaining.length > 0) {
-    const svgStart  = remaining.indexOf('[SVG:')
-    const refMatch  = remaining.match(/\[DIAGRAM_REF:(\d+)\]/)
-    const diagStart = remaining.indexOf('[DIAGRAM:')
-    const boldMatch = remaining.match(/\*\*Diagram:\*\*\s*([^\n]+)/)
-    const candidates = [
-      svgStart >= 0  ? { type: 'svg',  pos: svgStart }                         : null,
-      refMatch       ? { type: 'ref',  pos: refMatch.index, match: refMatch }   : null,
-      diagStart >= 0 ? { type: 'diag', pos: diagStart }                         : null,
-      boldMatch      ? { type: 'bold', pos: boldMatch.index, match: boldMatch } : null,
-    ].filter(Boolean)
-    if (candidates.length === 0) { parts.push(<span key={parts.length}>{remaining}</span>); break }
-    candidates.sort((a, b) => a.pos - b.pos)
-    const first = candidates[0]
-    if (first.pos > 0) parts.push(<span key={parts.length}>{remaining.slice(0, first.pos)}</span>)
-    if (first.type === 'svg') {
-      const svgEnd = remaining.indexOf(']', svgStart + 5)
-      if (svgEnd === -1) { parts.push(<span key={parts.length}>{remaining}</span>); break }
-      parts.push(<div key={parts.length} style={{ margin: '12px 0', padding: '16px', background: 'white', borderRadius: 8, border: '1px solid var(--border)', display: 'flex', justifyContent: 'center', overflowX: 'auto' }}><div dangerouslySetInnerHTML={{ __html: remaining.slice(svgStart + 5, svgEnd) }} /></div>)
-      remaining = remaining.slice(svgEnd + 1)
-    } else if (first.type === 'ref') {
-      const diagram = diagrams?.find(d => d.id === parseInt(first.match[1]))
-      if (diagram?.svg) parts.push(<div key={parts.length} style={{ margin: '12px 0', padding: '16px', background: 'white', borderRadius: 8, border: '1px solid var(--border)', display: 'flex', justifyContent: 'center', overflowX: 'auto' }}><div dangerouslySetInnerHTML={{ __html: diagram.svg }} /></div>)
-      else if (diagram?.description) parts.push(<DiagramPlaceholder key={parts.length} desc={diagram.description} />)
-      remaining = remaining.slice(first.match.index + first.match[0].length)
-    } else if (first.type === 'diag') {
-      const dEnd = remaining.indexOf(']', diagStart + 9)
-      if (dEnd === -1) { parts.push(<span key={parts.length}>{remaining}</span>); break }
-      parts.push(<DiagramPlaceholder key={parts.length} desc={remaining.slice(diagStart + 9, dEnd).trim()} />)
-      remaining = remaining.slice(dEnd + 1)
-    } else if (first.type === 'bold') {
-      parts.push(<DiagramPlaceholder key={parts.length} desc={first.match[1].trim()} />)
-      remaining = remaining.slice(first.match.index + first.match[0].length)
-    }
-  }
-  return parts.length > 0 ? parts : text
-}
-
-function DiagramPlaceholder({ desc }) {
+function CoverageBar({ coverage }) {
+  if (!coverage) return null
+  const pct = coverage.percentage || 0
+  const color = pct >= 80 ? 'bg-teal-500' : pct >= 60 ? 'bg-yellow-500' : 'bg-red-500'
   return (
-    <div style={{ margin: '10px 0', padding: '12px 16px', background: 'var(--bg3)', border: '1px dashed var(--border2)', borderRadius: 8, fontSize: 12, color: 'var(--text2)', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-      <span style={{ fontSize: 16 }}>📐</span>
-      <div><strong style={{ color: 'var(--text)', display: 'block', marginBottom: 2 }}>Diagram:</strong>{desc}</div>
+    <div className="mt-4 p-4 bg-slate-800 rounded-xl">
+      <div className="flex justify-between items-center mb-2">
+        <span className="text-sm text-slate-300 font-medium">Topic Coverage</span>
+        <span className={`text-sm font-bold ${pct >= 80 ? 'text-teal-400' : pct >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>{pct}%</span>
+      </div>
+      <div className="w-full bg-slate-700 rounded-full h-2">
+        <div className={`h-2 rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+      <p className="text-xs text-slate-400 mt-1">{coverage.covered}/{coverage.total} topics covered</p>
+      {coverage.uncoveredTopics && coverage.uncoveredTopics.length > 0 && (
+        <p className="text-xs text-slate-500 mt-1">Missing: {coverage.uncoveredTopics.slice(0, 4).join(', ')}{coverage.uncoveredTopics.length > 4 ? '…' : ''}</p>
+      )}
     </div>
   )
 }
 
-function ScopeCard({ scope, onConfirm, onReanalyse, analysing }) {
-  const [term, setTerm]             = useState(scope.term || '')
-  const [examType, setExamType]     = useState(scope.examType || '')
-  const [topics, setTopics]         = useState((scope.topics || []).join(', '))
-  const [timeMins, setTimeMins]     = useState(scope.format?.timeMins || 60)
-  const [totalMarks, setTotalMarks] = useState(scope.format?.totalMarks || '')
-  const [hasMCQ, setHasMCQ]         = useState(scope.hasMCQ !== false)
-  const [difficulty, setDifficulty] = useState('match')
-  const [step, setStep]             = useState('review') // 'review' | 'confirm'
+// ── Human Feedback Card ────────────────────────────────────────────────────────
 
-  const topicList = topics.split(',').map(t => t.trim()).filter(Boolean)
+function FeedbackCard({ feedback, scope, onConfirm, onEdit }) {
+  const [editing, setEditing] = useState(false)
+  const [editedScope, setEditedScope] = useState(scope)
 
-  function buildArc(topicArr) {
-    if (topicArr.length === 0) return Array.from({length:5},(_,i)=>({paper:i+1,topics:[]}))
-    const perPaper = Math.ceil(topicArr.length / 5)
-    return Array.from({length:5}, (_,i) => ({ paper:i+1, topics:topicArr.slice(i*perPaper,(i+1)*perPaper) }))
-  }
-  const arc = buildArc(topicList)
+  if (!feedback) return null
 
-  const confidenceColor = scope.confidence === 'high' ? 'var(--teal2)' : '#d97706'
-  const confidenceBg    = scope.confidence === 'high' ? 'var(--teal-bg)' : 'rgba(217,119,6,0.1)'
-  const inp = { width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13, boxSizing: 'border-box' }
+  const lines = feedback.split('\n\n').filter(Boolean)
 
-  function handleConfirm() {
-    onConfirm({
-      term, examType,
-      topics: topicList,
-      format: { timeMins: Number(timeMins)||60, totalMarks: Number(totalMarks)||100, sections: Array.isArray(scope.format?.sections)?scope.format.sections:[], questionStructure: scope.format?.questionStructure||'', noMCQ: !hasMCQ },
-      curriculum: scope.curriculum, confidence: scope.confidence,
-      difficultyProfile: scope.difficultyProfile||null, difficultyMode: difficulty,
-      levelDescription: scope.levelDescription||'', hasMCQ,
-      sectionType: hasMCQ ? 'mcq-and-long-answer' : 'long-answer-only',
-      summaryLine: `${term} \u00b7 ${examType} \u00b7 ${scope.curriculum||''}`
-    })
-  }
+  return (
+    <div className="bg-slate-800 rounded-2xl p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <div className="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center text-sm">🔍</div>
+        <h3 className="text-white font-semibold">Document Analysis</h3>
+      </div>
 
-  function FormatPreview() {
-    const sections = hasMCQ
-      ? [{name:'Section A',sub:'Multiple choice',color:'#7c3aed'},{name:'Section B',sub:'Short answer',color:'var(--teal2)'},{name:'Section C',sub:'Extended response',color:'#d97706'}]
-      : [{name:'Questions',sub:'Multi-part (a)(b)(c)(d)(e)',color:'var(--teal2)'},{name:'Final Q',sub:'Extended synthesis',color:'#d97706'}]
-    return (
-      <div style={{display:'flex',gap:6}}>
-        {sections.map((s,i) => (
-          <div key={i} style={{flex:1,background:'var(--bg2)',border:`1px solid ${s.color}40`,borderRadius:8,padding:'8px 10px',borderTop:`3px solid ${s.color}`}}>
-            <div style={{fontSize:11,fontWeight:600,color:s.color}}>{s.name}</div>
-            <div style={{fontSize:10,color:'var(--text3)',marginTop:2}}>{s.sub}</div>
-          </div>
+      {/* Human-readable feedback */}
+      <div className="space-y-2">
+        {lines.map((line, i) => (
+          <p key={i} className="text-sm text-slate-300 leading-relaxed" dangerouslySetInnerHTML={{
+            __html: line.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-white">$1</strong>')
+          }} />
         ))}
       </div>
-    )
-  }
 
-  if (step === 'confirm') {
-    return (
-      <div style={{background:'var(--bg2)',border:'2px solid var(--teal-border)',borderRadius:14,padding:24,marginBottom:20}}>
-        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
-          <div style={{width:36,height:36,borderRadius:'50%',background:'var(--teal-bg)',border:'1px solid var(--teal-border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>✓</div>
-          <div>
-            <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>Ready to generate your 5 mock papers</div>
-            <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{topicList.length} topics · {hasMCQ?'MCQ + short answer + extended':'Long answer only'} · {timeMins} min · {totalMarks} marks</div>
-          </div>
-        </div>
-        <div style={{marginBottom:20}}>
-          <div style={{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:10}}>Your 5-paper coverage plan — each paper covers different topics</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:6}}>
-            {arc.map(({paper,topics:pt}) => (
-              <div key={paper} style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,padding:'8px 10px',borderTop:'2px solid var(--teal-border)'}}>
-                <div style={{fontSize:11,fontWeight:600,color:'var(--teal2)',marginBottom:5}}>Mock {paper}</div>
-                {pt.length>0
-                  ? pt.map(t=><div key={t} style={{fontSize:9,color:'var(--text3)',lineHeight:1.5,marginBottom:1}}>→ {t.length>22?t.slice(0,22)+'…':t}</div>)
-                  : <div style={{fontSize:9,color:'var(--text3)'}}>Gap revision + harder angles</div>
-                }
+      {/* Format preview */}
+      {scope?.sections && scope.sections.length > 0 && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">Detected Format</p>
+          <div className="space-y-2">
+            {scope.sections.map((s, i) => (
+              <div key={i} className="flex items-center justify-between bg-slate-700 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <SectionBadge type={s.type} />
+                  <span className="text-sm text-white">{s.name}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-sm font-bold text-teal-400">{s.questionCount} questions</span>
+                  <span className="text-xs text-slate-400 ml-2">({s.totalMarks} marks)</span>
+                </div>
               </div>
             ))}
           </div>
-        </div>
-        <div style={{display:'flex',gap:10}}>
-          <button onClick={handleConfirm} style={{flex:1,padding:'12px 0',borderRadius:10,fontSize:14,fontWeight:700,background:'var(--teal)',color:'#fff',border:'none',cursor:'pointer'}}>
-            Generate Mock Paper 1 →
-          </button>
-          <button onClick={()=>setStep('review')} style={{padding:'12px 16px',borderRadius:10,fontSize:13,background:'var(--bg3)',color:'var(--text2)',border:'1px solid var(--border)',cursor:'pointer'}}>
-            ← Edit
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{background:'var(--bg2)',border:'2px solid var(--teal-border)',borderRadius:14,padding:24,marginBottom:20}}>
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:16}}>
-        <div>
-          <div style={{fontSize:15,fontWeight:700,color:'var(--text)',marginBottom:4}}>🔍 Here's what I understand about your exam</div>
-          <div style={{fontSize:12,color:'var(--text3)'}}>
-            Format from: {scope.docNames?.filter(n=>!scope.ignoredDocNames?.includes(n)).slice(0,2).join(', ')}{scope.docNames?.length>2?` +${scope.docNames.length-2} more`:''}
-            {scope.ignoredDocNames?.length>0 && <span style={{color:'#d97706'}}> · {scope.ignoredDocNames.length} solution sheet{scope.ignoredDocNames.length>1?'s':''} filtered out</span>}
-          </div>
-        </div>
-        <div style={{fontSize:11,padding:'4px 10px',borderRadius:10,background:confidenceBg,color:confidenceColor,border:`1px solid ${confidenceColor}40`,flexShrink:0,marginLeft:12}}>
-          {scope.confidence} confidence
-        </div>
-      </div>
-
-      {scope.confidenceReason && (
-        <div style={{fontSize:12,color:'var(--text2)',background:'var(--bg3)',padding:'8px 12px',borderRadius:8,marginBottom:16,borderLeft:`3px solid ${confidenceColor}`}}>
-          {scope.confidenceReason}
+          {scope.duration && (
+            <p className="text-xs text-slate-400">⏱ Duration: <strong className="text-slate-300">{scope.duration}</strong> · Total marks: <strong className="text-slate-300">{scope.totalMarks || '—'}</strong></p>
+          )}
         </div>
       )}
 
-      <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px',marginBottom:16}}>
-        <div style={{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:10}}>Detected exam format — is this right?</div>
-        <FormatPreview />
-        <div style={{marginTop:12,display:'flex',gap:6}}>
-          {[{val:false,label:'Long answer only',desc:'Multi-part (a)(b)(c)(d), no MCQ'},{val:true,label:'MCQ + Long answer',desc:'Multiple choice + written sections'}].map(opt=>(
-            <button key={String(opt.val)} onClick={()=>setHasMCQ(opt.val)} style={{flex:1,padding:'8px 12px',borderRadius:8,textAlign:'left',cursor:'pointer',border:hasMCQ===opt.val?'2px solid var(--teal2)':'1px solid var(--border)',background:hasMCQ===opt.val?'var(--teal-bg)':'var(--bg2)'}}>
-              <div style={{fontSize:11,fontWeight:600,color:hasMCQ===opt.val?'var(--teal2)':'var(--text)',marginBottom:2}}>{opt.label}</div>
-              <div style={{fontSize:10,color:'var(--text3)'}}>{opt.desc}</div>
-            </button>
-          ))}
-        </div>
-        {scope.format?.questionStructure && (
-          <div style={{marginTop:10,fontSize:11,color:'var(--text3)',padding:'6px 10px',background:'var(--bg2)',borderRadius:6}}>Style: {scope.format.questionStructure}</div>
-        )}
-      </div>
-
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
-        <div>
-          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Term / Period</label>
-          <input style={inp} value={term} onChange={e=>setTerm(e.target.value)} placeholder="e.g. SMO5 Statistics, Term 1" />
-          {scope.termOptions?.length>0 && (
-            <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:4}}>
-              {scope.termOptions.slice(0,4).map(t=>(
-                <button key={t} onClick={()=>setTerm(t)} style={{fontSize:10,padding:'2px 8px',borderRadius:8,background:term===t?'var(--teal)':'var(--bg3)',color:term===t?'#fff':'var(--text3)',border:term===t?'none':'1px solid var(--border)',cursor:'pointer'}}>{t}</button>
-              ))}
-            </div>
-          )}
-        </div>
-        <div>
-          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Exam type</label>
-          <input style={inp} value={examType} onChange={e=>setExamType(e.target.value)} placeholder="e.g. unit test, final exam" />
-          {scope.examTypeOptions?.length>0 && (
-            <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:4}}>
-              {scope.examTypeOptions.slice(0,4).map(t=>(
-                <button key={t} onClick={()=>setExamType(t)} style={{fontSize:10,padding:'2px 8px',borderRadius:8,background:examType===t?'var(--teal)':'var(--bg3)',color:examType===t?'#fff':'var(--text3)',border:examType===t?'none':'1px solid var(--border)',cursor:'pointer'}}>{t}</button>
-              ))}
-            </div>
-          )}
-        </div>
-        <div>
-          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Time (minutes)</label>
-          <input style={inp} type="number" value={timeMins} onChange={e=>setTimeMins(e.target.value)} placeholder="60" />
-        </div>
-        <div>
-          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Total marks</label>
-          <input style={inp} type="number" value={totalMarks} onChange={e=>setTotalMarks(e.target.value)} placeholder="77" />
-        </div>
-      </div>
-
-      <div style={{marginBottom:16}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
-          <label style={{fontSize:11,color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.05em'}}>Topics to test — tap × to remove, add your own</label>
-          <span style={{fontSize:10,color:'var(--teal2)',fontWeight:600}}>{topicList.length} topics</span>
-        </div>
-        <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:8}}>
-          {topicList.map((t,i)=>(
-            <span key={i} onClick={()=>setTopics(topicList.filter((_,j)=>j!==i).join(', '))} style={{fontSize:10,padding:'3px 10px',borderRadius:10,background:'var(--teal-bg)',color:'var(--teal2)',border:'1px solid var(--teal-border)',cursor:'pointer',userSelect:'none'}}>
-              {t} ×
-            </span>
-          ))}
-        </div>
-        <textarea style={{...inp,height:64,resize:'vertical',lineHeight:1.5}} value={topics} onChange={e=>setTopics(e.target.value)} placeholder="Type to add more topics, comma separated..." />
-      </div>
-
-      <div style={{marginBottom:18}}>
-        <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:8,textTransform:'uppercase',letterSpacing:'0.05em'}}>Mock difficulty</label>
-        {scope.difficultyProfile?.description && (
-          <div style={{fontSize:11,color:'var(--text3)',marginBottom:8,padding:'6px 10px',background:'var(--bg3)',borderRadius:6}}>
-            Detected: {scope.difficultyProfile.description} · {scope.difficultyProfile.stepsPerCalculation} steps/problem
+      {/* Topics preview */}
+      {scope?.topics && scope.topics.length > 0 && (
+        <div className="mt-2">
+          <p className="text-xs text-slate-500 uppercase tracking-wider font-medium mb-2">Topics ({scope.topics.length})</p>
+          <div className="flex flex-wrap gap-1.5">
+            {scope.topics.map((t, i) => {
+              const name = typeof t === 'string' ? t : t.name
+              const priority = typeof t === 'object' ? t.priority : 'medium'
+              return (
+                <span key={i} className={`text-xs px-2 py-0.5 rounded-full border ${
+                  priority === 'high' ? 'border-teal-500 text-teal-300 bg-teal-950' :
+                  'border-slate-600 text-slate-400 bg-slate-800'
+                }`}>{name}</span>
+              )
+            })}
           </div>
-        )}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
-          {[{value:'match',label:'Match exactly',desc:'Same difficulty as your past papers'},{value:'harder',label:'Slightly harder',desc:'~20% more challenging'},{value:'exam-plus',label:'Exam-plus',desc:'Maximum — multi-concept synthesis'}].map(opt=>(
-            <button key={opt.value} onClick={()=>setDifficulty(opt.value)} style={{padding:'10px 12px',borderRadius:10,textAlign:'left',cursor:'pointer',border:difficulty===opt.value?'2px solid var(--teal2)':'1px solid var(--border)',background:difficulty===opt.value?'var(--teal-bg)':'var(--bg3)'}}>
-              <div style={{fontSize:11,fontWeight:600,color:difficulty===opt.value?'var(--teal2)':'var(--text)',marginBottom:3}}>{opt.label}</div>
-              <div style={{fontSize:10,color:'var(--text3)',lineHeight:1.4}}>{opt.desc}</div>
-            </button>
-          ))}
         </div>
+      )}
+
+      {/* Confidence warning */}
+      {scope?.confidence === 'low' && (
+        <div className="bg-yellow-950 border border-yellow-700 rounded-lg p-3">
+          <p className="text-xs text-yellow-300">⚠️ Low confidence — please review the format above and adjust before generating.</p>
+        </div>
+      )}
+
+      <div className="flex gap-3 pt-2">
+        <button
+          onClick={onConfirm}
+          className="flex-1 bg-teal-600 hover:bg-teal-500 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm"
+        >
+          ✅ Looks correct — Generate Mock Paper
+        </button>
+        <button
+          onClick={() => setEditing(!editing)}
+          className="px-4 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2.5 rounded-xl transition-colors text-sm"
+        >
+          ✏️ Edit Format
+        </button>
       </div>
 
-      <div style={{display:'flex',gap:10,alignItems:'center'}}>
-        <button onClick={()=>setStep('confirm')} style={{flex:1,padding:'11px 0',borderRadius:10,fontSize:14,fontWeight:700,background:'var(--teal)',color:'#fff',border:'none',cursor:'pointer'}}>
-          Looks right — show my paper plan →
+      {/* Edit panel */}
+      {editing && (
+        <EditScopePanel scope={editedScope} onSave={(updated) => { setEditedScope(updated); onEdit(updated); setEditing(false) }} onCancel={() => setEditing(false)} />
+      )}
+    </div>
+  )
+}
+
+function EditScopePanel({ scope, onSave, onCancel }) {
+  const [sections, setSections] = useState(scope?.sections || [])
+  const [topics, setTopics] = useState((scope?.topics || []).map(t => typeof t === 'string' ? t : t.name).join(', '))
+  const [duration, setDuration] = useState(scope?.duration || '')
+
+  return (
+    <div className="border border-slate-600 rounded-xl p-4 space-y-4 bg-slate-850">
+      <h4 className="text-sm font-semibold text-white">Edit Exam Format</h4>
+
+      {/* Sections editor */}
+      <div className="space-y-2">
+        <p className="text-xs text-slate-400 font-medium">Sections</p>
+        {sections.map((s, i) => (
+          <div key={i} className="flex gap-2 items-center">
+            <input
+              className="flex-1 bg-slate-700 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-600"
+              value={s.name}
+              onChange={e => { const ns = [...sections]; ns[i] = { ...ns[i], name: e.target.value }; setSections(ns) }}
+              placeholder="Section name"
+            />
+            <input
+              className="w-24 bg-slate-700 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-600"
+              type="number"
+              value={s.questionCount}
+              onChange={e => { const ns = [...sections]; ns[i] = { ...ns[i], questionCount: parseInt(e.target.value) || 0 }; setSections(ns) }}
+              placeholder="# Qs"
+            />
+            <span className="text-xs text-slate-400">Qs</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Duration */}
+      <div>
+        <p className="text-xs text-slate-400 font-medium mb-1">Duration</p>
+        <input
+          className="w-full bg-slate-700 text-white text-sm rounded-lg px-3 py-1.5 border border-slate-600"
+          value={duration}
+          onChange={e => setDuration(e.target.value)}
+          placeholder="e.g. 60 minutes"
+        />
+      </div>
+
+      {/* Topics */}
+      <div>
+        <p className="text-xs text-slate-400 font-medium mb-1">Topics (comma-separated)</p>
+        <textarea
+          className="w-full bg-slate-700 text-white text-sm rounded-lg px-3 py-2 border border-slate-600 resize-none"
+          rows={3}
+          value={topics}
+          onChange={e => setTopics(e.target.value)}
+          placeholder="Electric fields, Magnetic fields, Capacitors..."
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => onSave({
+            ...scope,
+            sections,
+            duration,
+            topics: topics.split(',').map(t => ({ name: t.trim(), priority: 'medium' })).filter(t => t.name)
+          })}
+          className="flex-1 bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+        >
+          Save Changes
         </button>
-        <button onClick={onReanalyse} disabled={analysing} style={{padding:'11px 16px',borderRadius:10,fontSize:13,background:'var(--bg3)',color:'var(--text2)',border:'1px solid var(--border)',cursor:analysing?'not-allowed':'pointer'}}>
-          {analysing?'Analysing...':'Re-analyse'}
-        </button>
+        <button onClick={onCancel} className="px-4 bg-slate-700 text-slate-300 text-sm py-2 rounded-lg">Cancel</button>
       </div>
     </div>
   )
 }
 
+// ── Paper Viewer ───────────────────────────────────────────────────────────────
+
+function PaperViewer({ paper, onClose }) {
+  const [showAnswers, setShowAnswers] = useState(false)
+  const [activeSection, setActiveSection] = useState(0)
+
+  if (!paper) return null
+
+  const sections = paper.sections || []
+
+  return (
+    <div className="fixed inset-0 bg-slate-950 z-50 overflow-y-auto">
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-white">{paper.title || 'Mock Examination'}</h1>
+            <div className="flex gap-3 mt-2 flex-wrap">
+              {paper.examBoard && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">{paper.examBoard}</span>}
+              {paper.duration && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">⏱ {paper.duration}</span>}
+              {paper.totalMarks && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">📊 {paper.totalMarks} marks</span>}
+            </div>
+            {paper.instructions && <p className="text-sm text-slate-400 mt-2">{paper.instructions}</p>}
+          </div>
+          <div className="flex gap-2 flex-shrink-0">
+            <button
+              onClick={() => setShowAnswers(!showAnswers)}
+              className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+            >
+              {showAnswers ? '🙈 Hide answers' : '🔑 Show answers'}
+            </button>
+            <button onClick={onClose} className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg">✕ Close</button>
+          </div>
+        </div>
+
+        {/* Coverage bar */}
+        <CoverageBar coverage={paper.coverage} />
+
+        {/* Section tabs */}
+        {sections.length > 1 && (
+          <div className="flex gap-2 mt-4 overflow-x-auto pb-1">
+            {sections.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => setActiveSection(i)}
+                className={`flex-shrink-0 text-sm px-4 py-1.5 rounded-full transition-colors ${activeSection === i ? 'bg-teal-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+              >
+                {s.sectionName || s.name || `Section ${i + 1}`}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Active section */}
+        {sections.length > 0 && (
+          <SectionViewer section={sections[activeSection]} showAnswers={showAnswers} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SectionViewer({ section, showAnswers }) {
+  if (!section) return null
+  const questions = section.questions || []
+
+  return (
+    <div className="mt-4 space-y-4">
+      {/* Section header */}
+      <div className="bg-slate-800 rounded-xl p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <h2 className="text-lg font-bold text-white">{section.sectionName}</h2>
+          <SectionBadge type={section.sectionType} />
+        </div>
+        {section.instructions && <p className="text-sm text-slate-400">{section.instructions}</p>}
+        {section.error && <p className="text-sm text-red-400 mt-1">⚠️ {section.error}</p>}
+      </div>
+
+      {/* Questions */}
+      {questions.map((q, qi) => (
+        <QuestionCard key={qi} question={q} number={qi + 1} showAnswers={showAnswers} sectionType={section.sectionType} />
+      ))}
+
+      {questions.length === 0 && !section.error && (
+        <p className="text-slate-500 text-sm text-center py-8">No questions generated for this section.</p>
+      )}
+    </div>
+  )
+}
+
+function QuestionCard({ question, number, showAnswers, sectionType }) {
+  const isMCQ = (sectionType || '').toLowerCase().includes('multiple')
+
+  return (
+    <div className="bg-slate-800 rounded-xl p-4 space-y-3">
+      {/* Question header */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2">
+          <span className="flex-shrink-0 w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-teal-400">{number}</span>
+          <div>
+            {question.topic && <span className="text-xs text-slate-500">{question.topic}</span>}
+            {question.context && <p className="text-sm text-slate-400 mt-1 italic">{question.context}</p>}
+          </div>
+        </div>
+        <span className="flex-shrink-0 text-xs text-slate-400">{question.marks || question.totalMarks} marks</span>
+      </div>
+
+      {/* Diagram */}
+      {question.diagramSvg && (
+        <div className="overflow-x-auto" dangerouslySetInnerHTML={{ __html: question.diagramSvg }} />
+      )}
+
+      {/* MCQ format */}
+      {isMCQ && question.stem && (
+        <div className="space-y-2">
+          <p className="text-sm text-white font-medium">{question.stem}</p>
+          {question.options && Object.entries(question.options).map(([key, val]) => (
+            <div key={key} className={`flex items-start gap-2 px-3 py-2 rounded-lg text-sm ${showAnswers && question.answer === key ? 'bg-teal-900 border border-teal-600 text-teal-200' : 'bg-slate-750 border border-slate-700 text-slate-300'}`}>
+              <span className="font-bold text-teal-400 flex-shrink-0">{key}.</span>
+              <span>{val}</span>
+            </div>
+          ))}
+          {showAnswers && (
+            <div className="bg-slate-700 rounded-lg px-3 py-2">
+              <p className="text-xs text-teal-400 font-medium">Answer: {question.answer}</p>
+              {question.explanation && <p className="text-xs text-slate-400 mt-1">{question.explanation}</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Short/extended answer format */}
+      {!isMCQ && question.parts && (
+        <div className="space-y-3">
+          {question.parts.map((part, pi) => (
+            <div key={pi} className="pl-3 border-l-2 border-slate-700">
+              <div className="flex items-start gap-2">
+                <span className="text-xs font-bold text-teal-400 flex-shrink-0">({part.part})</span>
+                <div className="flex-1">
+                  <p className="text-sm text-white">{part.question}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{part.marks} mark{part.marks !== 1 ? 's' : ''}</p>
+                  {showAnswers && part.markingCriteria && (
+                    <div className="mt-2 bg-slate-700 rounded-lg p-2">
+                      <p className="text-xs text-teal-400 font-medium mb-1">Marking criteria:</p>
+                      <ul className="space-y-0.5">
+                        {part.markingCriteria.map((c, ci) => (
+                          <li key={ci} className="text-xs text-slate-400">• {c}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* No parts, just question text */}
+      {!isMCQ && !question.parts && question.question && (
+        <p className="text-sm text-white">{question.question}</p>
+      )}
+    </div>
+  )
+}
+
+// ── Upload Area ────────────────────────────────────────────────────────────────
+
+function UploadArea({ subjectId, onUploadComplete }) {
+  const [dragging, setDragging] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [results, setResults] = useState([])
+  const fileRef = useRef()
+
+  const handleFiles = async (files) => {
+    if (!files.length) return
+    setUploading(true)
+    setResults([])
+
+    const formData = new FormData()
+    formData.append('subjectId', subjectId)
+    for (const f of files) formData.append('files', f)
+
+    try {
+      const res = await fetch('/api/ingest-doc', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (data.ok) {
+        setResults(data.results || [])
+        onUploadComplete(data)
+      } else {
+        setResults([{ filename: 'Upload', status: 'error', message: data.error || 'Upload failed' }])
+      }
+    } catch (e) {
+      setResults([{ filename: 'Upload', status: 'error', message: e.message }])
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div
+        onDragOver={e => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); handleFiles([...e.dataTransfer.files]) }}
+        onClick={() => fileRef.current?.click()}
+        className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${dragging ? 'border-teal-400 bg-teal-950' : 'border-slate-600 hover:border-slate-500 hover:bg-slate-800'}`}
+      >
+        <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.txt,.png,.jpg,.jpeg" className="hidden" onChange={e => handleFiles([...e.target.files])} />
+        {uploading ? (
+          <div className="space-y-2">
+            <div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-sm text-slate-400">Processing files…</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-3xl">📄</p>
+            <p className="text-sm font-medium text-white">Drop files here or click to browse</p>
+            <p className="text-xs text-slate-500">PDF, DOCX, TXT, JPG, PNG · Past papers & notes welcome</p>
+          </div>
+        )}
+      </div>
+
+      {results.length > 0 && (
+        <div className="space-y-1.5">
+          {results.map((r, i) => (
+            <div key={i} className={`flex items-start gap-2 text-xs px-3 py-2 rounded-lg ${
+              r.status === 'ok' ? 'bg-teal-950 text-teal-300' :
+              r.status === 'filtered' ? 'bg-slate-800 text-slate-400' :
+              r.status === 'warning' ? 'bg-yellow-950 text-yellow-300' :
+              'bg-red-950 text-red-300'
+            }`}>
+              <span className="flex-shrink-0">{r.status === 'ok' ? '✅' : r.status === 'filtered' ? '🔍' : r.status === 'warning' ? '⚠️' : '❌'}</span>
+              <div>
+                <span className="font-medium">{r.filename}</span>
+                {r.role && <span className="ml-2 opacity-70">({r.role.replace('_', ' ')})</span>}
+                <span className="block opacity-70">{r.message}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main MockPaper Page ────────────────────────────────────────────────────────
 
 export default function MockPaper() {
-  const { getToken } = useAuth()
-  const { subjects, fetchSubjects } = useSubjectsStore()
-
-  const [selectedSubjectId, setSelectedSubjectId]   = useState('')
-  const [subjectPapers, setSubjectPapers]           = useState([])
-  const [loadingPapers, setLoadingPapers]           = useState(false)
-  const [submitting, setSubmitting]                 = useState(false)
-  const [error, setError]                           = useState(null)
-  const [customInstructions, setCustomInstructions] = useState('')
-  const [viewingPaper, setViewingPaper]             = useState(null)
-  const [showAnswers, setShowAnswers]               = useState({})
-  const [confirmReplace, setConfirmReplace]         = useState(null)
-  const [deletingId, setDeletingId]                 = useState(null)
-  const [slotsExhausted, setSlotsExhausted]         = useState(false)
-  const [subjectDocs, setSubjectDocs]               = useState([])
-  const [scope, setScope]                           = useState(null)
-  const [analysing, setAnalysing]                   = useState(false)
-  const [analyseError, setAnalyseError]             = useState(null)
-  const [globalDifficulty, setGlobalDifficulty]     = useState('match') // persisted per subject
+  const { subjects, loadSubjects } = useSubjectStore()
+  const [selectedSubjectId, setSelectedSubjectId] = useState('')
+  const [docs, setDocs] = useState([])
+  const [scope, setScope] = useState(null)
+  const [feedback, setFeedback] = useState(null)
+  const [papers, setPapers] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [analysing, setAnalysing] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [generatingProgress, setGeneratingProgress] = useState(0)
+  const [generatingMsg, setGeneratingMsg] = useState('')
+  const [viewingPaper, setViewingPaper] = useState(null)
+  const [error, setError] = useState(null)
   const pollRef = useRef(null)
 
-  useEffect(() => {
-    getToken().then(token => fetchSubjects(token))
-    return () => clearInterval(pollRef.current)
+  useEffect(() => { loadSubjects() }, [])
+
+  const loadDocs = useCallback(async (subjectId) => {
+    if (!subjectId) return
+    try {
+      const res = await fetch(`/api/docs?subjectId=${subjectId}`)
+      const data = await res.json()
+      setDocs(data.docs || [])
+      // Load scope if exists
+      const scopeRes = await fetch(`/api/scope?subjectId=${subjectId}`)
+      if (scopeRes.ok) {
+        const scopeData = await scopeRes.json()
+        if (scopeData.scope) {
+          setScope(scopeData.scope)
+          setFeedback(scopeData.scope.feedback || null)
+        } else {
+          setScope(null)
+          setFeedback(null)
+        }
+      }
+    } catch (e) {
+      console.error('loadDocs error:', e)
+    }
+  }, [])
+
+  const loadPapers = useCallback(async (subjectId) => {
+    if (!subjectId) return
+    try {
+      const res = await fetch(`/api/papers?subjectId=${subjectId}`)
+      const data = await res.json()
+      if (Array.isArray(data.papers)) {
+        setPapers(data.papers)
+      } else if (Array.isArray(data)) {
+        setPapers(data)
+      }
+    } catch (e) {
+      console.error('loadPapers error:', e)
+    }
   }, [])
 
   useEffect(() => {
-    clearInterval(pollRef.current)
-    setError(null); setSlotsExhausted(false)
-    setScope(null); setSubjectDocs([]); setAnalyseError(null)
     if (selectedSubjectId) {
-      loadSubjectPapers(); loadSubjectDocs(); loadScope()
-      // Load saved difficulty for this subject
-      const subj = subjects.find(s => s.id === selectedSubjectId)
-      if (subj?.difficultyLevel) setGlobalDifficulty(subj.difficultyLevel)
-      else setGlobalDifficulty('match')
+      loadDocs(selectedSubjectId)
+      loadPapers(selectedSubjectId)
+      setScope(null)
+      setFeedback(null)
     }
   }, [selectedSubjectId])
 
-  async function saveDifficulty(level) {
-    setGlobalDifficulty(level)
-    // Persist to subject record
-    try {
-      const token = await getToken()
-      await fetch('/api/subjects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ id: selectedSubjectId, difficultyLevel: level })
-      })
-    } catch {}
+  const handleSubjectChange = (id) => {
+    setSelectedSubjectId(id)
+    setError(null)
+    setGenerating(false)
+    if (pollRef.current) clearInterval(pollRef.current)
   }
 
-  useEffect(() => {
-    const pending = subjectPapers.filter(p => p.status === 'queued' || p.status === 'generating')
-    clearInterval(pollRef.current)
-    if (pending.length > 0) {
-      pollRef.current = setInterval(async () => {
-        const token = await getToken()
-        const res = await fetch(`/api/papers?subjectId=${selectedSubjectId}`, { headers: { Authorization: `Bearer ${token}` } })
-        if (res.ok) { const data = await res.json(); setSubjectPapers(data.papers || []) }
-      }, 8000)
+  const handleUploadComplete = (data) => {
+    loadDocs(selectedSubjectId)
+    setScope(null)
+    setFeedback(null)
+    if (data.needsAnalysis) {
+      setError(null)
     }
-    return () => clearInterval(pollRef.current)
-  }, [subjectPapers, selectedSubjectId])
-
-  async function loadSubjectPapers() {
-    setLoadingPapers(true)
-    try {
-      const token = await getToken()
-      const res = await fetch(`/api/papers?subjectId=${selectedSubjectId}`, { headers: { Authorization: `Bearer ${token}` } })
-      if (res.ok) { const data = await res.json(); setSubjectPapers(data.papers || []) }
-    } finally { setLoadingPapers(false) }
   }
 
-  async function loadSubjectDocs() {
+  const handleAnalyse = async () => {
+    if (!selectedSubjectId) return
+    setAnalysing(true)
+    setError(null)
+    setFeedback(null)
+    setScope(null)
     try {
-      const token = await getToken()
-      const res = await fetch(`/api/docs?subjectId=${selectedSubjectId}`, { headers: { Authorization: `Bearer ${token}` } })
-      if (res.ok) { const data = await res.json(); setSubjectDocs(data.docs || []) }
-    } catch {}
-  }
-
-  async function loadScope() {
-    try {
-      const token = await getToken()
-      const res = await fetch(`/api/docs?subjectId=${selectedSubjectId}&action=scope`, { headers: { Authorization: `Bearer ${token}` } })
-      if (res.ok) { const data = await res.json(); setScope(data.scope || null) }
-    } catch {}
-  }
-
-  async function runAnalysis() {
-    setAnalysing(true); setAnalyseError(null)
-    try {
-      const token = await getToken()
-      const res = await fetch(`/api/docs?subjectId=${selectedSubjectId}&action=analyse`, {
+      const res = await fetch('/api/analyse-docs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subjectId: selectedSubjectId })
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Analysis failed')
-      setScope(data.scope)
-    } catch (e) { setAnalyseError(e.message) }
-    finally { setAnalysing(false) }
+      if (data.ok) {
+        setScope(data.scope)
+        setFeedback(data.feedback)
+      } else {
+        setError(data.error || 'Analysis failed')
+      }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setAnalysing(false)
+    }
   }
 
-  async function confirmScope(editedScope) {
+  const handleConfirmScope = async () => {
+    if (!scope) return
+    // Mark scope as confirmed
+    const confirmedScope = { ...scope, confirmed: true }
+    setScope(confirmedScope)
+    // Save confirmed scope
     try {
-      const token = await getToken()
-      const res = await fetch(`/api/docs?subjectId=${selectedSubjectId}&action=scope`, {
+      await fetch('/api/scope', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ confirmedScope: editedScope })
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subjectId: selectedSubjectId, scope: confirmedScope })
       })
-      const data = await res.json()
-      if (res.ok) setScope(data.scope)
     } catch {}
   }
 
-  async function clearScope() {
-    try {
-      const token = await getToken()
-      await fetch(`/api/docs?subjectId=${selectedSubjectId}&action=scope`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-      setScope(null)
-    } catch {}
+  const handleEditScope = (updatedScope) => {
+    setScope({ ...updatedScope, confirmed: false })
   }
 
-  async function generate(replaceSlot = null, forceNew = false) {
-    setSubmitting(true); setError(null); setSlotsExhausted(false); setConfirmReplace(null)
+  const handleGenerate = async () => {
+    if (!selectedSubjectId || !scope?.confirmed) return
+    setGenerating(true)
+    setGeneratingProgress(5)
+    setGeneratingMsg('Starting paper generation…')
+    setError(null)
+
     try {
-      const token = await getToken()
       const res = await fetch('/api/generate-mock', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ subjectId: selectedSubjectId, customInstructions, forceNew, replaceSlot, confirmedScope: scope?.confirmed ? scope : null, difficultyMode: globalDifficulty })
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subjectId: selectedSubjectId })
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to queue paper')
-      if (data.slotsExhausted) { setSlotsExhausted(true); return }
-      await loadSubjectPapers()
-    } catch (e) { setError(e.message) }
-    finally { setSubmitting(false) }
+
+      if (!data.ok) {
+        setError(data.error || 'Generation failed')
+        setGenerating(false)
+        return
+      }
+
+      const paperId = data.paperId
+      if (!paperId) {
+        setError('No paper ID returned')
+        setGenerating(false)
+        return
+      }
+
+      // Poll for completion
+      let attempts = 0
+      pollRef.current = setInterval(async () => {
+        attempts++
+        try {
+          const pollRes = await fetch(`/api/papers?subjectId=${selectedSubjectId}`)
+          const pollData = await pollRes.json()
+          const paperList = Array.isArray(pollData.papers) ? pollData.papers : (Array.isArray(pollData) ? pollData : [])
+          const paper = paperList.find(p => p.id === paperId)
+
+          if (paper) {
+            setGeneratingProgress(paper.progress || attempts * 5)
+            setGeneratingMsg(paper.statusMsg || 'Generating…')
+
+            if (paper.status === 'complete') {
+              clearInterval(pollRef.current)
+              setGenerating(false)
+              setPapers(paperList)
+              setViewingPaper(paper.paper)
+            } else if (paper.status === 'error') {
+              clearInterval(pollRef.current)
+              setGenerating(false)
+              setError(paper.error || 'Generation failed')
+            }
+          }
+        } catch {}
+
+        if (attempts > 60) { // 5 min timeout
+          clearInterval(pollRef.current)
+          setGenerating(false)
+          setError('Generation timed out. Please try again.')
+        }
+      }, 5000)
+
+    } catch (e) {
+      setError(e.message)
+      setGenerating(false)
+    }
   }
 
-  async function deletePaper(paperId) {
-    setDeletingId(paperId)
-    try {
-      const token = await getToken()
-      await fetch(`/api/papers?subjectId=${selectedSubjectId}&paperId=${paperId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-      await loadSubjectPapers()
-    } finally { setDeletingId(null) }
-  }
-
-  function toggleAnswer(sIdx, qIdx) { setShowAnswers(a => ({ ...a, [`${sIdx}-${qIdx}`]: !a[`${sIdx}-${qIdx}`] })) }
-
-  const sel = { width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13, cursor: 'pointer', appearance: 'none' }
-
-  if (viewingPaper) {
-    const { paper, sourceType, slotNumber, topicsCovered, comparison } = viewingPaper
-    const src = SOURCE_LABELS[sourceType] || SOURCE_LABELS.syllabus
-    return (
-      <div style={{ maxWidth: 900 }}>
-        <style>{`@media print{.no-print{display:none!important}}`}</style>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center' }} className="no-print">
-          <button onClick={() => setViewingPaper(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>← Back</button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' }}>
-            {paper.scopeTerm && <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 20, background: 'var(--teal-bg)', color: 'var(--teal2)', border: '1px solid var(--teal-border)' }}>📋 {paper.scopeTerm}</span>}
-          </div>
-          <button onClick={() => window.print()} className="no-print" style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 14px', color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>Print</button>
-        </div>
-
-        {/* Comparison scorecard — shown before the paper */}
-        {comparison && (
-          <div className="no-print" style={{ background: 'var(--bg2)', border: `1px solid ${comparison.overallMatch >= 90 ? 'rgba(16,185,129,0.3)' : 'rgba(217,119,6,0.3)'}`, borderRadius: 14, padding: '18px 22px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>How this paper compares to your past papers</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Based on {viewingPaper.docCount || 'uploaded'} past paper{viewingPaper.docCount !== 1 ? 's' : ''} analysed</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 36, fontWeight: 700, color: comparison.overallMatch >= 90 ? '#10b981' : '#d97706', lineHeight: 1 }}>{comparison.overallMatch}%</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{comparison.strikeRate}</div>
-              </div>
-            </div>
-            {/* 3 metric bars */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-              {[
-                { label: 'Topic coverage', value: comparison.topicCoveragePercent, color: '#10b981' },
-                { label: 'Format match', value: comparison.formatMatchPercent, color: '#2563eb' },
-              ].map(({ label, value, color }) => (
-                <div key={label}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>
-                    <span>{label}</span><span style={{ fontWeight: 600 }}>{value}%</span>
-                  </div>
-                  <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${value}%`, background: color, borderRadius: 3 }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-            {/* Covered topics */}
-            {comparison.coveredTopics?.length > 0 && (
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 5 }}>Topics covered in this paper:</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {comparison.coveredTopics.map(t => (
-                    <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' }}>✓ {t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Gap topics */}
-            {comparison.gapTopics?.length > 0 && (
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 5 }}>Topics queued for next paper:</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {comparison.gapTopics.map(t => (
-                    <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.25)', color: '#d97706' }}>→ {t}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div style={{ background: 'var(--bg2)', border: '2px solid var(--border)', borderRadius: 14, padding: '36px 40px', marginBottom: 16 }}>
-          <div style={{ textAlign: 'center', borderBottom: '3px double var(--border)', paddingBottom: 20, marginBottom: 20 }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 6 }}>Australian Capital Territory</div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px', marginBottom: 4 }}>{paper.coverPage?.school || 'Student Mastery'}</div>
-          </div>
-          <div style={{ width: 60, height: 3, background: 'var(--teal)', margin: '10px auto', borderRadius: 2 }} />
-          <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text)', marginTop: 10 }}>{paper.subject} — Year {paper.yearLevel}</div>
-          <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>{paper.examBoard} Mock Examination — Paper {slotNumber}</div>
-          {paper.scopeTerm && <div style={{ fontSize: 12, color: 'var(--teal2)', marginTop: 4, fontWeight: 600 }}>Scope: {paper.scopeTerm} · {paper.scopeExamType}</div>}
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, margin: '20px 0' }}>
-            {[{ label: 'Total marks', value: paper.totalMarks }, { label: 'Time allowed', value: paper.timeAllowed }, { label: 'Permitted materials', value: paper.allowedMaterials || 'Scientific calculator, ruler' }].map(({ label, value }) => (
-              <div key={label} style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 14px', border: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{value}</div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-              {['Full name', 'Teacher', 'Class / Line', 'Date'].map(field => (
-                <div key={field}><div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{field}</div><div style={{ borderBottom: '1px solid var(--border)', height: 28 }} /></div>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ background: 'var(--bg3)', borderRadius: 10, padding: '16px 20px', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Instructions to candidates</div>
-            <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {(paper.coverPage?.instructions || ['Write in black or blue pen', 'Scientific calculator permitted', 'Show all working for full marks', 'Marks are awarded for correct working, not just final answers']).map((inst, i) => (
-                <li key={i} style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>{inst}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {(paper.sections || []).map((s, i) => (
-              <div key={i} style={{ fontSize: 11, padding: '4px 12px', borderRadius: 20, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)' }}>{s.name} — {s.marks} marks</div>
-            ))}
-          </div>
-        </div>
-
-        {(paper.sections || []).map((section, sIdx) => (
-          <div key={sIdx} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: '22px 28px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingBottom: 14, borderBottom: '2px solid var(--border)' }}>
-              <div>
-                <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{section.name}</h2>
-                <div style={{ fontSize: 12, color: 'var(--text3)' }}>{section.instructions}</div>
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--teal2)', background: 'var(--teal-bg)', padding: '6px 16px', borderRadius: 20, border: '1px solid var(--teal-border)', whiteSpace: 'nowrap' }}>{section.marks} marks</div>
-            </div>
-            {(section.questions || []).map((q, qIdx) => (
-              <div key={qIdx} style={{ paddingBottom: 24, marginBottom: 24, borderBottom: qIdx < section.questions.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                <div style={{ display: 'flex', gap: 16 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--bg3)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, color: 'var(--text2)', flexShrink: 0, marginTop: 2 }}>{q.number}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>{renderQuestionText(q.question, paper.diagrams)}</div>
-                    {/* Render diagram directly on question if present */}
-                    {q.diagram?.svg && (
-                      <div style={{ margin: '12px 0', padding: '16px', background: 'white', borderRadius: 10, border: '1px solid var(--border)', display: 'flex', justifyContent: 'center', overflowX: 'auto' }}>
-                        <div dangerouslySetInnerHTML={{ __html: q.diagram.svg }} />
-                      </div>
-                    )}
-                    {q.diagram && !q.diagram.svg && q.diagram.description && (
-                      <DiagramPlaceholder desc={q.diagram.description} />
-                    )}
-                    {q.parts && q.parts.map((part, pIdx) => (
-                      <div key={pIdx} style={{ marginLeft: 16, marginBottom: 12 }}>
-                        <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 6 }}>
-                          <strong>{String.fromCharCode(97 + pIdx)})</strong>{' '}{renderQuestionText(part.question, paper.diagrams)}
-                          <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>[{part.marks} {part.marks !== 1 ? 's' : ''}]</span>
-                        </div>
-                        <div style={{ border: '1px solid var(--border)', borderRadius: 6, height: part.marks > 2 ? 80 : 44, background: 'var(--bg3)', marginBottom: 4 }} />
-                      </div>
-                    ))}
-                    {q.options && !q.parts && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
-                        {q.options.map((opt, i) => <div key={i} style={{ fontSize: 13, color: 'var(--text)', padding: '8px 12px', borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)' }}>{opt}</div>)}
-                      </div>
-                    )}
-                    {q.type !== 'mcq' && !q.parts && <div style={{ border: '1px solid var(--border)', borderRadius: 8, height: q.type === 'extended' ? 120 : 60, background: 'var(--bg3)', marginBottom: 8 }} />}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <span style={{ fontSize: 11, color: 'var(--text3)', background: 'var(--bg3)', padding: '2px 10px', borderRadius: 10, border: '1px solid var(--border)' }}>{q.marks} {q.marks === 1 ? 'mark' : 'marks'}</span>
-                        {q.topic && <span style={{ fontSize: 11, color: 'var(--text3)' }}>{q.topic}</span>}
-                      </div>
-                      <button onClick={() => toggleAnswer(sIdx, qIdx)} style={{ fontSize: 12, color: 'var(--teal2)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                        {showAnswers[`${sIdx}-${qIdx}`] ? 'Hide answer ↑' : 'Show answer ↓'}
-                      </button>
-                    </div>
-                    {showAnswers[`${sIdx}-${qIdx}`] && (
-                      <div style={{ marginTop: 10, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', borderRadius: 10, padding: '14px 18px' }}>
-                        {q.answer && <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--teal2)', marginBottom: 6 }}>Answer: {q.answer}</div>}
-                        {q.workingOut && <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.8, marginBottom: 6, fontFamily: 'monospace', background: 'var(--bg3)', padding: '8px 12px', borderRadius: 6 }}>{q.workingOut}</div>}
-                        {q.markingCriteria && <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}><strong>Marking criteria:</strong> {q.markingCriteria}</div>}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    )
-  }
-
-  const readyPapers     = subjectPapers.filter(p => p.status === 'ready')
-  const pendingPapers   = subjectPapers.filter(p => p.status === 'queued' || p.status === 'generating')
   const selectedSubject = subjects.find(s => s.id === selectedSubjectId)
-  const hasDocs         = subjectDocs.length > 0
-  const scopeConfirmed  = scope?.confirmed === true
 
   return (
-    <div style={{ maxWidth: 900 }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}`}</style>
-      <div style={{ marginBottom: 24 }}><h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)' }}>Mock paper generator</h1></div>
+    <div className="min-h-screen bg-slate-900 text-white">
+      <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
 
-      <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, marginBottom: 20 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'end' }}>
-          <div>
-            <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Select subject</label>
-            <select value={selectedSubjectId} onChange={e => setSelectedSubjectId(e.target.value)} style={sel}>
-              <option value="">Choose a subject...</option>
-              {subjects.map(s => <option key={s.id} value={s.id}>{s.name} — {s.examBoard} Year {s.yearLevel}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Custom focus (optional)</label>
-            <input type="text" value={customInstructions} onChange={e => setCustomInstructions(e.target.value)} placeholder="e.g. More on capacitors, harder extended response..." style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 13 }} />
-          </div>
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold text-white">Mock Papers</h1>
+          <p className="text-slate-400 text-sm mt-1">Upload past papers and notes — I'll generate mock exams that match your real exam format exactly.</p>
         </div>
-        {selectedSubject && (
-          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text3)' }}>
-            {selectedSubject.state} · {selectedSubject.examBoard} · Year {selectedSubject.yearLevel}
-          </div>
+
+        {/* Subject selector */}
+        <div>
+          <label className="text-xs text-slate-500 uppercase tracking-wider font-medium block mb-2">Select Subject</label>
+          <select
+            value={selectedSubjectId}
+            onChange={e => handleSubjectChange(e.target.value)}
+            className="w-full bg-slate-800 border border-slate-600 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-teal-500"
+          >
+            <option value="">— Choose a subject —</option>
+            {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+
+        {selectedSubjectId && (
+          <>
+            {/* Upload area */}
+            <div className="bg-slate-800 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-white">Upload Documents</h3>
+                {docs.length > 0 && <span className="text-xs text-slate-400">{docs.length} file{docs.length !== 1 ? 's' : ''} uploaded</span>}
+              </div>
+              <p className="text-xs text-slate-500">Upload past exam papers AND/OR notes. Past papers define the format; notes add topics. Solution sheets are automatically filtered out.</p>
+              <UploadArea subjectId={selectedSubjectId} onUploadComplete={handleUploadComplete} />
+
+              {/* Uploaded files list */}
+              {docs.length > 0 && (
+                <div className="space-y-1">
+                  {docs.map((d, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-slate-400 bg-slate-750 px-3 py-1.5 rounded-lg">
+                      <span>{d.role === 'past_paper' ? '📄' : '📝'}</span>
+                      <span className="flex-1 truncate">{d.name}</span>
+                      <span className="text-slate-600">{d.chunkCount} chunks</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Analyse button */}
+            {docs.length > 0 && !feedback && (
+              <button
+                onClick={handleAnalyse}
+                disabled={analysing}
+                className="w-full bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white font-semibold py-3 rounded-2xl transition-colors flex items-center justify-center gap-2"
+              >
+                {analysing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Analysing your documents…
+                  </>
+                ) : (
+                  '🔍 Analyse my documents'
+                )}
+              </button>
+            )}
+
+            {/* Error */}
+            {error && (
+              <div className="bg-red-950 border border-red-700 text-red-300 rounded-xl p-3 text-sm">
+                ❌ {error}
+              </div>
+            )}
+
+            {/* Feedback card */}
+            {feedback && scope && !scope.confirmed && (
+              <FeedbackCard
+                feedback={feedback}
+                scope={scope}
+                onConfirm={handleConfirmScope}
+                onEdit={handleEditScope}
+              />
+            )}
+
+            {/* Re-analyse button if scope was confirmed */}
+            {scope?.confirmed && (
+              <div className="bg-slate-800 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Format confirmed ✅</p>
+                    <p className="text-xs text-slate-400">{scope.sections?.length || 0} sections · {scope.topics?.length || 0} topics · {scope.duration || 'timed exam'}</p>
+                  </div>
+                  <button
+                    onClick={() => { setScope({ ...scope, confirmed: false }) }}
+                    className="text-xs text-slate-500 hover:text-slate-300"
+                  >
+                    Edit
+                  </button>
+                </div>
+
+                {/* Generate button */}
+                {!generating ? (
+                  <button
+                    onClick={handleGenerate}
+                    className="w-full bg-teal-600 hover:bg-teal-500 text-white font-bold py-3 rounded-xl transition-colors"
+                  >
+                    🎓 Generate Mock Paper
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-slate-400">
+                      <span>{generatingMsg}</span>
+                      <span>{generatingProgress}%</span>
+                    </div>
+                    <div className="w-full bg-slate-700 rounded-full h-2">
+                      <div className="h-2 bg-teal-500 rounded-full transition-all duration-500" style={{ width: `${generatingProgress}%` }} />
+                    </div>
+                    <p className="text-xs text-slate-500 text-center">This takes 2–4 minutes. You can leave this screen open.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Papers history */}
+            {papers.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="font-semibold text-white">Generated Papers</h3>
+                {papers.filter(p => !p.subjectId || p.subjectId === selectedSubjectId).map((p, i) => (
+                  <div key={i} className="bg-slate-800 rounded-xl p-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-white">{p.paper?.title || p.subjectName || 'Mock Paper'}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {p.completedAt ? new Date(p.completedAt).toLocaleDateString() : 'In progress'}
+                        {p.coverage && ` · ${p.coverage.percentage}% topic coverage`}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      {p.status === 'complete' && p.paper && (
+                        <button
+                          onClick={() => setViewingPaper(p.paper)}
+                          className="text-sm px-3 py-1.5 bg-teal-700 hover:bg-teal-600 text-white rounded-lg transition-colors"
+                        >
+                          View
+                        </button>
+                      )}
+                      {(p.status === 'generating' || p.status === 'queued') && (
+                        <span className="text-xs text-yellow-400 flex items-center gap-1">
+                          <div className="w-3 h-3 border border-yellow-400 border-t-transparent rounded-full animate-spin" />
+                          Generating…
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {selectedSubjectId && (
-        <>
-          {/* No docs */}
-          {!hasDocs && (
-            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: 24, marginBottom: 20, textAlign: 'center' }}>
-              <div style={{ fontSize: 32, marginBottom: 12 }}>📂</div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>No documents uploaded yet</div>
-              <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 8 }}>Upload past papers and notes in Subjects first — the more you upload, the better scoped your mock will be.</div>
-              <div style={{ fontSize: 12, color: 'var(--text3)' }}>Subjects → {selectedSubject?.name} → upload past papers and notes</div>
-            </div>
-          )}
-
-          {/* Docs exist, no scope yet */}
-          {hasDocs && !scope && (
-            <div style={{ background: 'var(--bg2)', border: '2px solid var(--teal-border)', borderRadius: 14, padding: 24, marginBottom: 20 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>🔍 Step 1 — Analyse your documents</div>
-              <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
-                You have <strong>{subjectDocs.length} document{subjectDocs.length !== 1 ? 's' : ''}</strong> uploaded
-                ({subjectDocs.filter(d => d.docType === 'past-paper').length} past paper{subjectDocs.filter(d => d.docType === 'past-paper').length !== 1 ? 's' : ''},
-                {' '}{subjectDocs.filter(d => d.docType !== 'past-paper').length} notes).
-                Analyse them all together to detect the term, topics and exam format.
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
-                {subjectDocs.map(d => (
-                  <span key={d.id} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 10, background: d.docType === 'past-paper' ? 'rgba(124,58,237,0.1)' : 'var(--teal-bg)', color: d.docType === 'past-paper' ? '#7c3aed' : 'var(--teal2)', border: `1px solid ${d.docType === 'past-paper' ? 'rgba(124,58,237,0.2)' : 'var(--teal-border)'}` }}>
-                    {d.docType === 'past-paper' ? '📄' : '📝'} {d.filename}
-                  </span>
-                ))}
-              </div>
-              {analyseError && <div style={{ fontSize: 12, color: 'var(--red)', padding: '8px 12px', background: 'var(--red-bg)', borderRadius: 8, marginBottom: 12 }}>{analyseError}</div>}
-              <button onClick={runAnalysis} disabled={analysing} style={{ padding: '11px 28px', borderRadius: 10, fontSize: 14, fontWeight: 600, background: analysing ? 'var(--bg3)' : 'var(--teal)', color: analysing ? 'var(--text2)' : '#fff', border: 'none', cursor: analysing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-                {analysing ? <><svg style={{ width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--text2)', borderRadius: '50%', animation: 'spin .8s linear infinite', flexShrink: 0 }} />Analysing your documents...</> : '🔍 Analyse all documents'}
-              </button>
-            </div>
-          )}
-
-          {/* Scope detected — show card */}
-          {hasDocs && scope && !scopeConfirmed && (
-            <ScopeCard scope={scope} onConfirm={confirmScope} onReanalyse={runAnalysis} analysing={analysing} />
-          )}
-
-          {/* Confirmed scope badge + persistent difficulty */}
-          {scopeConfirmed && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', borderRadius: '10px 10px 0 0' }}>
-                <div style={{ flex: 1 }}>
-                  <span style={{ fontSize: 13, color: 'var(--teal2)', fontWeight: 600 }}>📋 {scope.summaryLine || `${scope.term} · ${scope.examType}`}</span>
-                  {scope.topics?.length > 0 && <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>{scope.topics.slice(0, 4).join(' · ')}{scope.topics.length > 4 ? ` +${scope.topics.length - 4}` : ''}</span>}
-                </div>
-                <button onClick={clearScope} style={{ fontSize: 11, color: 'var(--text3)', background: 'none', border: 'none', cursor: 'pointer' }}>Change scope</button>
-              </div>
-              {/* Persistent difficulty selector */}
-              <div style={{ background: 'var(--bg2)', border: '1px solid var(--teal-border)', borderTop: 'none', borderRadius: '0 0 10px 10px', padding: '12px 14px' }}>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Difficulty — applies to all mocks and quizzes for this subject
-                </div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {[
-                    { value: 'match', label: 'Match papers', desc: 'Identical difficulty' },
-                    { value: 'harder', label: 'Slightly harder', desc: '~15-20% stretch' },
-                    { value: 'exam-plus', label: 'Exam-plus', desc: 'Maximum challenge' }
-                  ].map(opt => (
-                    <button key={opt.value} onClick={() => saveDifficulty(opt.value)} style={{
-                      flex: 1, padding: '8px 10px', borderRadius: 8, textAlign: 'left', cursor: 'pointer',
-                      border: globalDifficulty === opt.value ? '2px solid var(--teal2)' : '1px solid var(--border)',
-                      background: globalDifficulty === opt.value ? 'var(--teal-bg)' : 'var(--bg3)'
-                    }}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: globalDifficulty === opt.value ? 'var(--teal2)' : 'var(--text)', marginBottom: 2 }}>{opt.label}</div>
-                      <div style={{ fontSize: 10, color: 'var(--text3)' }}>{opt.desc}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Generate section — only when scope confirmed */}
-          {scopeConfirmed && (
-            <>
-              {pendingPapers.length > 0 && (
-                <div style={{ background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.3)', borderRadius: 10, padding: '14px 18px', marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#d97706', marginBottom: 4 }}>{pendingPapers.map(p => `Mock ${p.slotNumber}`).join(', ')} {pendingPapers.length === 1 ? 'is' : 'are'} being generated</div>
-                  <div style={{ fontSize: 12, color: '#92400e' }}>Full papers take 2-3 minutes — 4 Claude calls building MCQ + short answer + extended response. You can close the browser and we'll email you when it's ready.</div>
-                </div>
-              )}
-
-              <div style={{ marginBottom: 20 }}>
-                {/* Coverage tracker — shows all topics, which papers covered them */}
-                {(() => {
-                  const allTopics = scope?.topics || []
-                  const coveredTopics = [...new Set(readyPapers.flatMap(p => p.topicsCovered || []))]
-                  const gapTopics = allTopics.filter(t => !coveredTopics.some(c => c.toLowerCase().includes(t.toLowerCase().slice(0,8))))
-                  if (allTopics.length === 0 || readyPapers.length === 0) return null
-                  const pct = Math.round((coveredTopics.length / Math.max(allTopics.length, coveredTopics.length)) * 100)
-                  return (
-                    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', marginBottom: 14 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>Topic coverage across all papers</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: pct >= 80 ? 'var(--teal2)' : '#d97706' }}>{pct}% covered</div>
-                      </div>
-                      {/* Progress bar */}
-                      <div style={{ height: 5, background: 'var(--border)', borderRadius: 3, marginBottom: 10, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${pct}%`, background: pct >= 80 ? 'var(--teal2)' : '#d97706', borderRadius: 3, transition: 'width 0.5s ease' }} />
-                      </div>
-                      {/* Covered topics */}
-                      {coveredTopics.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: gapTopics.length > 0 ? 8 : 0 }}>
-                          {coveredTopics.map(t => (
-                            <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981' }}>✓ {t}</span>
-                          ))}
-                        </div>
-                      )}
-                      {/* Gap topics — shown in amber */}
-                      {gapTopics.length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 5 }}>Queued for upcoming papers:</div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                            {gapTopics.map(t => (
-                              <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.3)', color: '#d97706' }}>→ {t}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })()}
-
-                <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Mock papers — {readyPapers.length}/5 ready{pendingPapers.length > 0 && <span style={{ color: '#d97706', marginLeft: 8 }}>· {pendingPapers.length} generating</span>}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
-                  {[1,2,3,4,5].map(slot => {
-                    const paper     = subjectPapers.find(p => p.slotNumber === slot)
-                    const isEmpty   = !paper
-                    const status    = paper?.status
-                    const statusCfg = status ? STATUS_CONFIG[status] : null
-                    const isReady   = status === 'ready'
-                    const isPending = status === 'queued' || status === 'generating'
-                    const isFailed  = status === 'failed'
-                    // For next empty slot — show what gap topics will be covered
-                    const isNextSlot = isEmpty && readyPapers.length + pendingPapers.length === slot - 1
-                    const allTopics  = scope?.topics || []
-                    const covered    = [...new Set(readyPapers.flatMap(p => p.topicsCovered || []))]
-                    const gaps       = allTopics.filter(t => !covered.some(c => c.toLowerCase().includes(t.toLowerCase().slice(0,8))))
-                    return (
-                      <div key={slot} style={{ background: isEmpty ? 'var(--bg3)' : 'var(--bg2)', border: `1px solid ${isPending ? 'rgba(217,119,6,0.4)' : isNextSlot ? 'rgba(217,119,6,0.25)' : isEmpty ? 'var(--border)' : 'var(--border2)'}`, borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, minHeight: 160 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: isPending ? '#d97706' : isEmpty ? 'var(--text3)' : 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Mock {slot}</span>
-                        {isEmpty && !isNextSlot && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Empty slot</div>}
-                        {/* Next slot — show gap preview */}
-                        {isNextSlot && gaps.length > 0 && (
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 10, color: '#d97706', marginBottom: 5, fontWeight: 600 }}>Will cover gaps:</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 8 }}>
-                              {gaps.slice(0, 4).map(t => (
-                                <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.25)', color: '#d97706' }}>→ {t.length > 22 ? t.slice(0,22)+'…' : t}</span>
-                              ))}
-                              {gaps.length > 4 && <span style={{ fontSize: 9, color: 'var(--text3)' }}>+{gaps.length - 4} more</span>}
-                            </div>
-                            <button onClick={() => generate()} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer', width: '100%' }}>+ Generate</button>
-                          </div>
-                        )}
-                        {isNextSlot && gaps.length === 0 && (
-                          <button onClick={() => generate()} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>+ Generate</button>
-                        )}
-                        {isPending && statusCfg && (
-                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                            {statusCfg.spin
-                              ? <div style={{ width: 22, height: 22, border: '2px solid var(--teal-border)', borderTopColor: 'var(--teal2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />
-                              : <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#d97706', animation: 'pulse 1.5s infinite' }} />
-                            }
-                            <div style={{ fontSize: 11, fontWeight: 600, color: statusCfg.color, textAlign: 'center' }}>{statusCfg.label}</div>
-                            {/* Progress bar */}
-                            {paper?.progress && (
-                              <>
-                                <div style={{ width: '100%', height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-                                  <div style={{ height: '100%', width: `${paper.progress}%`, background: 'var(--teal2)', borderRadius: 2, transition: 'width 0.5s ease' }} />
-                                </div>
-                                <div style={{ fontSize: 10, color: 'var(--teal2)', fontWeight: 600 }}>{paper.progress}%</div>
-                                <div style={{ fontSize: 9, color: 'var(--text3)', textAlign: 'center' }}>
-                                  {paper.progress < 50 ? 'Writing MCQ + short answer...' : paper.progress < 75 ? 'Adding Section B questions...' : 'Writing extended response...'}
-                                </div>
-                              </>
-                            )}
-                            {!paper?.progress && <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center' }}>2-3 minutes · close browser and come back</div>}
-                          </div>
-                        )}
-                        {isFailed && (
-                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                            <div style={{ fontSize: 11, color: 'var(--red)', textAlign: 'center' }}>Generation failed</div>
-                            <button onClick={() => deletePaper(paper.id).then(() => generate(slot))} style={{ fontSize: 11, padding: '5px 12px', borderRadius: 8, background: 'var(--red-bg)', border: '1px solid rgba(220,38,38,0.3)', color: 'var(--red)', cursor: 'pointer' }}>Retry</button>
-                          </div>
-                        )}
-                        {isReady && (
-                          <>
-                            <div style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(paper.completedAt || paper.generatedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
-                            {/* Comparison badge */}
-                            {paper.comparison?.overallMatch && (
-                              <div style={{
-                                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
-                                background: paper.comparison.overallMatch >= 90 ? 'rgba(16,185,129,0.15)' : 'rgba(217,119,6,0.15)',
-                                color: paper.comparison.overallMatch >= 90 ? '#10b981' : '#d97706',
-                                border: `1px solid ${paper.comparison.overallMatch >= 90 ? 'rgba(16,185,129,0.3)' : 'rgba(217,119,6,0.3)'}`,
-                                alignSelf: 'flex-start'
-                              }}>
-                                {paper.comparison.overallMatch >= 90 ? '🎯 ' : ''}{paper.comparison.overallMatch}% match
-                              </div>
-                            )}
-                            {paper.topicsCovered?.length > 0 && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                                {paper.topicsCovered.slice(0,3).map(t => (
-                                  <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 8, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' }}>✓ {t.length > 16 ? t.slice(0,16)+'…' : t}</span>
-                                ))}
-                                {paper.topicsCovered.length > 3 && <span style={{ fontSize: 9, color: 'var(--text3)' }}>+{paper.topicsCovered.length-3}</span>}
-                              </div>
-                            )}
-                            <div style={{ display: 'flex', gap: 5, marginTop: 'auto' }}>
-                              <button onClick={() => setViewingPaper({ ...paper, subjectName: selectedSubject?.name })} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)', cursor: 'pointer' }}>View</button>
-                              <button onClick={() => setConfirmReplace(slot)} disabled={submitting} style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 7, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text2)', cursor: 'pointer' }}>Redo</button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {confirmReplace !== null && (
-                <div style={{ background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.3)', borderRadius: 10, padding: '14px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: 13, color: '#d97706' }}>Replace Mock {confirmReplace}? A new paper will be generated.</div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => setConfirmReplace(null)} style={{ fontSize: 12, padding: '6px 14px', borderRadius: 7, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text2)', cursor: 'pointer' }}>Cancel</button>
-                    <button onClick={() => generate(confirmReplace)} style={{ fontSize: 12, padding: '6px 14px', borderRadius: 7, background: '#d97706', border: 'none', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>Regenerate Mock {confirmReplace}</button>
-                  </div>
-                </div>
-              )}
-
-              {error && <div style={{ fontSize: 12, color: 'var(--red)', padding: '8px 12px', background: 'var(--red-bg)', borderRadius: 8, marginBottom: 12 }}>{error}</div>}
-
-              {readyPapers.length + pendingPapers.length < 5 && !slotsExhausted && (
-                <button onClick={() => generate()} disabled={submitting} style={{ padding: '13px 28px', borderRadius: 10, fontSize: 14, fontWeight: 600, background: submitting ? 'var(--bg3)' : 'var(--teal)', border: 'none', color: submitting ? 'var(--text2)' : '#fff', cursor: submitting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                  {submitting ? <><svg style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--text2)', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />Queuing...</> : `Generate Mock ${readyPapers.length + pendingPapers.length + 1}`}
-                </button>
-              )}
-
-              {(slotsExhausted || readyPapers.length + pendingPapers.length >= 5) && (
-                <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>All 5 papers generated</div>
-                  <div style={{ fontSize: 12, color: 'var(--text3)' }}>Use <strong>Redo</strong> to regenerate any slot — paper memory ensures fresh questions.</div>
-                </div>
-              )}
-
-              {readyPapers.length > 0 && (
-                <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text)', marginBottom: 10 }}>Topics covered across all papers</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {[...new Set(readyPapers.flatMap(p => p.topicsCovered || []))].map(topic => (
-                      <span key={topic} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, background: 'var(--teal-bg)', border: '1px solid var(--teal-border)', color: 'var(--teal2)' }}>{topic}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </>
-      )}
-
-      {!selectedSubjectId && (
-        <div style={{ textAlign: 'center', padding: '60px 24px', background: 'var(--bg2)', borderRadius: 14, border: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 14, color: 'var(--text2)', marginBottom: 6 }}>Select a subject to get started</div>
-          <div style={{ fontSize: 12, color: 'var(--text3)' }}>Full exam papers · BSSS, NESA, VCAA formats · UCAT, GAMSAT, IELTS and more</div>
-        </div>
-      )}
+      {/* Paper viewer overlay */}
+      {viewingPaper && <PaperViewer paper={viewingPaper} onClose={() => setViewingPaper(null)} />}
     </div>
   )
 }

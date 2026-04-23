@@ -1,123 +1,123 @@
+// api/generate-mock.js
+// Validates subject + confirmed scope, creates paper record, dispatches to mock-worker
+// Fixed: proper error handling, scope validation, paper record creation before worker call
+
 import { redisGet, redisSet } from './lib/redis.js'
 import { requireAuth } from './lib/clerk.js'
+
+function genId() {
+  return Math.random().toString(36).slice(2, 10)
+}
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {
     let body = ''
-    req.on('data', chunk => { body += chunk.toString() })
+    req.on('data', c => { body += c.toString() })
     req.on('end', () => { try { resolve(JSON.parse(body)) } catch { resolve({}) } })
     req.on('error', reject)
   })
 }
 
-function genId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-}
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   let userId
-  try { userId = await requireAuth(req) }
-  catch (e) { res.status(401).json({ error: 'Unauthorized' }); return }
+  try { userId = await requireAuth(req) } catch { return res.status(401).json({ error: 'Unauthorized' }) }
 
   try {
-    // ← confirmedScope added here — was missing, causing "not defined" error
-    const {
-      subjectId,
-      customInstructions = '',
-      forceNew = false,
-      replaceSlot = null,
-      confirmedScope = null,
-      difficultyMode = 'match'
-    } = await parseBody(req)
+    const { subjectId } = await parseBody(req)
+    if (!subjectId) return res.status(400).json({ error: 'subjectId required' })
 
-    if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
-
+    // Get subject
     const subjects = await redisGet(`sm:subjects:${userId}`) || []
     const subject = subjects.find(s => s.id === subjectId)
-    if (!subject) { res.status(404).json({ error: 'Subject not found' }); return }
+    if (!subject) return res.status(404).json({ error: 'Subject not found' })
 
-    // Check slots
-    const paperKey = `sm:papers:${userId}:${subjectId}`
-    const existingPapers = await redisGet(paperKey) || []
-    const cleanedPapers = existingPapers.filter(p => {
-      if (p.status === 'generating' || p.status === 'queued') {
-        return (Date.now() - new Date(p.generatedAt).getTime()) < 600000 // 10 min timeout
-      }
-      return p.status === 'ready'
-    })
-
-    if (cleanedPapers.length >= 5 && !forceNew && replaceSlot === null) {
-      res.status(200).json({
-        slotsExhausted: true,
-        papers: cleanedPapers.map(({ paper, questionsAsked, ...rest }) => rest)
-      })
-      return
+    // Get confirmed scope (required)
+    const scope = await redisGet(`sm:scope:${userId}:${subjectId}`)
+    if (!scope || !scope.confirmed) {
+      return res.status(400).json({ error: 'Please analyse your documents and confirm the exam format before generating.' })
     }
 
-    const slotNumber = replaceSlot !== null ? replaceSlot : cleanedPapers.length + 1
-    const jobId = genId()
+    // Get docs
+    const docs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+    if (docs.length === 0) {
+      return res.status(400).json({ error: 'No documents uploaded. Please upload past papers or notes first.' })
+    }
 
-    // Save placeholder immediately
-    const placeholder = {
-      id: jobId,
-      slotNumber,
+    // Create paper record
+    const paperId = genId()
+    const paperRecord = {
+      id: paperId,
       subjectId,
-      subjectName: subject.name,
-      generatedAt: new Date().toISOString(),
-      status: 'queued',
-      topicsCovered: [],
-      paper: null
+      subjectName: scope.subjectName || subject.name,
+      status: 'generating',
+      progress: 0,
+      statusMsg: 'Queued…',
+      createdAt: new Date().toISOString()
     }
 
-    let updatedPapers = [...cleanedPapers]
-    if (replaceSlot !== null) {
-      const idx = updatedPapers.findIndex(p => p.slotNumber === replaceSlot)
-      if (idx >= 0) updatedPapers[idx] = placeholder
-      else updatedPapers.push(placeholder)
-    } else {
-      updatedPapers.push(placeholder)
-    }
-    updatedPapers = updatedPapers.slice(0, 5).sort((a, b) => a.slotNumber - b.slotNumber)
-    await redisSet(paperKey, updatedPapers)
+    const papersKey = `sm:papers:${userId}`
+    const existingPapers = await redisGet(papersKey) || []
+    existingPapers.unshift(paperRecord)
+    await redisSet(papersKey, existingPapers.slice(0, 20))
 
-    // Publish job to QStash — confirmedScope forwarded through
-    const workerUrl = `https://${req.headers.host}/api/mock-worker`
-    const qstashRes = await fetch('https://qstash.upstash.io/v2/publish/' + workerUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.QSTASH_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Upstash-Retries': '0',
-        'Upstash-Delay': '0s'
-      },
-      body: JSON.stringify({
-        jobId,
-        userId,
-        subjectId,
-        slotNumber,
-        customInstructions,
-        replaceSlot,
-        confirmedScope,
-        difficultyMode
+    // Try QStash first, fallback to direct call
+    const workerUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/mock-worker`
+
+    if (process.env.QSTASH_TOKEN) {
+      // Async via QStash
+      const qstashRes = await fetch(`https://qstash.upstash.io/v2/publish/${encodeURIComponent(workerUrl)}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.QSTASH_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ paperId, userId, subjectId })
       })
-    })
-
-    if (!qstashRes.ok) {
-      const err = await qstashRes.text()
-      console.error('QStash publish failed:', qstashRes.status, err)
-      const papers2 = await redisGet(paperKey) || []
-      const idx2 = papers2.findIndex(p => p.id === jobId)
-      if (idx2 >= 0) { papers2[idx2].status = 'failed'; await redisSet(paperKey, papers2) }
-      res.status(500).json({ error: 'Failed to queue generation' })
-      return
+      if (!qstashRes.ok) {
+        console.warn('QStash failed, falling back to direct call')
+        // Fall through to direct call below
+      } else {
+        return res.status(200).json({ ok: true, paperId, async: true })
+      }
     }
 
-    res.status(200).json({ ok: true, jobId, slotNumber, status: 'queued' })
+    // Direct call (sync for small papers, or when QStash unavailable)
+    // Fire and forget — respond immediately then process
+    res.status(200).json({ ok: true, paperId, async: false })
+
+    // Process after response (Vercel edge gives us some time)
+    try {
+      const { default: mockWorker } = await import('./mock-worker.js')
+      // Create a fake req/res for the worker
+      const fakeReq = {
+        method: 'POST',
+        headers: {},
+        on: (event, cb) => {
+          if (event === 'data') cb(JSON.stringify({ paperId, userId, subjectId }))
+          if (event === 'end') cb()
+        }
+      }
+      const fakeRes = {
+        status: () => fakeRes,
+        json: () => {}
+      }
+      await mockWorker(fakeReq, fakeRes)
+    } catch (workerErr) {
+      console.error('Worker error:', workerErr.message)
+      // Update paper status to error
+      const papers = await redisGet(papersKey) || []
+      const idx = papers.findIndex(p => p.id === paperId)
+      if (idx !== -1) {
+        papers[idx].status = 'error'
+        papers[idx].error = workerErr.message
+        await redisSet(papersKey, papers)
+      }
+    }
 
   } catch (e) {
     console.error('generate-mock error:', e.message)
-    res.status(500).json({ error: e.message })
+    return res.status(500).json({ error: e.message })
   }
 }
