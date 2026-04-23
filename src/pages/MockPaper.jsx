@@ -2,7 +2,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSubjectsStore } from '../store/subjects'
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// Helper to get token with retries
+async function getToken() {
+  let retries = 0
+  while (retries < 10) {
+    try {
+      const token = await window.Clerk?.session?.getToken()
+      if (token) return token
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 100))
+    retries++
+  }
+  return null
+}
 
 function SectionBadge({ type }) {
   const t = (type || '').toLowerCase()
@@ -35,7 +47,6 @@ function CoverageBar({ coverage }) {
 
 function FeedbackCard({ feedback, scope, onConfirm, onEdit }) {
   const [editing, setEditing] = useState(false)
-  const [editedScope, setEditedScope] = useState(scope)
   if (!feedback) return null
   const lines = feedback.split('\n\n').filter(Boolean)
   return (
@@ -72,9 +83,6 @@ function FeedbackCard({ feedback, scope, onConfirm, onEdit }) {
         <button onClick={onConfirm} className="flex-1 bg-teal-600 hover:bg-teal-500 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm">
           ✅ Looks correct — Generate Mock Paper
         </button>
-        <button onClick={() => setEditing(!editing)} className="px-4 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-2.5 rounded-xl transition-colors text-sm">
-          ✏️ Edit Format
-        </button>
       </div>
     </div>
   )
@@ -94,7 +102,8 @@ function UploadArea({ subjectId, onUploadComplete }) {
     formData.append('subjectId', subjectId)
     for (const f of files) formData.append('files', f)
     try {
-      const token = await window.Clerk?.session?.getToken()
+      const token = await getToken()
+      if (!token) throw new Error('No authentication token')
       const res = await fetch('/api/ingest-doc', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
@@ -141,9 +150,7 @@ function UploadArea({ subjectId, onUploadComplete }) {
         <div className="space-y-1.5">
           {results.map((r, i) => (
             <div key={i} className={`flex items-start gap-2 text-xs px-3 py-2 rounded-lg ${
-              r.status === 'ok' ? 'bg-teal-950 text-teal-300' :
-              r.status === 'filtered' ? 'bg-slate-800 text-slate-400' :
-              'bg-red-950 text-red-300'
+              r.status === 'ok' ? 'bg-teal-950 text-teal-300' : 'bg-red-950 text-red-300'
             }`}>
               <span>{r.status === 'ok' ? '✅' : '❌'}</span>
               <div><span className="font-medium">{r.filename}</span><span className="block opacity-70">{r.message}</span></div>
@@ -156,7 +163,6 @@ function UploadArea({ subjectId, onUploadComplete }) {
 }
 
 function PaperViewer({ paper, onClose }) {
-  const [showAnswers, setShowAnswers] = useState(false)
   if (!paper) return null
   const sections = paper.sections || []
   return (
@@ -167,25 +173,9 @@ function PaperViewer({ paper, onClose }) {
             <h1 className="text-2xl font-bold text-white">{paper.title || 'Mock Examination'}</h1>
             <p className="text-sm text-slate-400 mt-2">{paper.instructions}</p>
           </div>
-          <button onClick={onClose} className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg">✕ Close</button>
+          <button onClick={onClose} className="text-sm px-3 py-1.5 bg-slate-700 text-slate-300 rounded-lg">✕</button>
         </div>
         <CoverageBar coverage={paper.coverage} />
-        <div className="mt-4 space-y-4">
-          {sections.map((s, i) => (
-            <div key={i} className="bg-slate-800 rounded-xl p-4">
-              <h2 className="text-lg font-bold text-white mb-2">{s.sectionName}</h2>
-              {s.instructions && <p className="text-sm text-slate-400 mb-3">{s.instructions}</p>}
-              <div className="space-y-3">
-                {(s.questions || []).map((q, qi) => (
-                  <div key={qi} className="bg-slate-750 rounded-lg p-3">
-                    <p className="text-sm text-white font-medium">Q{qi + 1}: {q.stem || q.question}</p>
-                    <p className="text-xs text-slate-400 mt-1">{q.marks || q.totalMarks} marks</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   )
@@ -210,7 +200,7 @@ export default function MockPaper() {
   useEffect(() => {
     const loadSubjects = async () => {
       try {
-        const token = await window.Clerk?.session?.getToken()
+        const token = await getToken()
         if (token) await fetchSubjects(token)
       } catch (e) {
         console.error('Failed to load subjects:', e)
@@ -232,7 +222,8 @@ export default function MockPaper() {
   const loadDocs = useCallback(async (subjectId) => {
     if (!subjectId) return
     try {
-      const token = await window.Clerk?.session?.getToken()
+      const token = await getToken()
+      if (!token) throw new Error('No auth token')
       const res = await fetch(`/api/docs?subjectId=${subjectId}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -246,7 +237,8 @@ export default function MockPaper() {
   const loadPapers = useCallback(async (subjectId) => {
     if (!subjectId) return
     try {
-      const token = await window.Clerk?.session?.getToken()
+      const token = await getToken()
+      if (!token) throw new Error('No auth token')
       const res = await fetch(`/api/papers?subjectId=${subjectId}`, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -262,7 +254,8 @@ export default function MockPaper() {
     setAnalysing(true)
     setError(null)
     try {
-      const token = await window.Clerk?.session?.getToken()
+      const token = await getToken()
+      if (!token) throw new Error('No auth token')
       const res = await fetch('/api/analyse-docs', {
         method: 'POST',
         headers: {
@@ -290,7 +283,8 @@ export default function MockPaper() {
     const confirmedScope = { ...scope, confirmed: true }
     setScope(confirmedScope)
     try {
-      const token = await window.Clerk?.session?.getToken()
+      const token = await getToken()
+      if (!token) return
       await fetch('/api/scope', {
         method: 'POST',
         headers: {
@@ -310,7 +304,8 @@ export default function MockPaper() {
     setError(null)
 
     try {
-      const token = await window.Clerk?.session?.getToken()
+      const token = await getToken()
+      if (!token) throw new Error('No auth token')
       const res = await fetch('/api/generate-mock', {
         method: 'POST',
         headers: {
@@ -331,7 +326,8 @@ export default function MockPaper() {
       pollRef.current = setInterval(async () => {
         attempts++
         try {
-          const token = await window.Clerk?.session?.getToken()
+          const token = await getToken()
+          if (!token) return
           const pollRes = await fetch(`/api/papers?subjectId=${selectedSubjectId}`, {
             headers: { Authorization: `Bearer ${token}` }
           })
@@ -447,19 +443,9 @@ export default function MockPaper() {
               <div className="space-y-3">
                 <h3 className="font-semibold text-white">Generated Papers</h3>
                 {papers.map((p, i) => (
-                  <div key={i} className="bg-slate-800 rounded-xl p-4 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-white">{p.paper?.title || 'Mock Paper'}</p>
-                      <p className="text-xs text-slate-400">{p.coverage?.percentage}% coverage</p>
-                    </div>
-                    {p.status === 'complete' && p.paper && (
-                      <button
-                        onClick={() => setViewingPaper(p.paper)}
-                        className="text-sm px-3 py-1.5 bg-teal-700 hover:bg-teal-600 text-white rounded-lg"
-                      >
-                        View
-                      </button>
-                    )}
+                  <div key={i} className="bg-slate-800 rounded-xl p-4">
+                    <p className="text-sm font-medium text-white">{p.paper?.title || 'Mock Paper'}</p>
+                    <p className="text-xs text-slate-400">{p.coverage?.percentage}% coverage</p>
                   </div>
                 ))}
               </div>
