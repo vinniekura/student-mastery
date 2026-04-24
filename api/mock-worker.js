@@ -327,7 +327,7 @@ export default async function handler(req, res) {
   let body = {}
   try { body = await parseBody(req) } catch {}
 
-  const { jobId, userId, subjectId, slotNumber, customInstructions='', confirmedScope=null, difficultyMode='match' } = body
+  const { jobId, userId, subjectId, slotNumber, customInstructions='', confirmedScope=null, difficultyMode='match', phase=1, partialPaper=null } = body
   if (!jobId || !userId || !subjectId) { res.status(400).json({ error: 'Missing required fields' }); return }
 
   const paperKey = `sm:papers:${userId}:${subjectId}`
@@ -338,6 +338,22 @@ export default async function handler(req, res) {
       const ii = pp.findIndex(p=>p.id===jobId)
       if(ii>=0){ pp[ii].status='failed'; pp[ii].error=msg; await redisSet(paperKey,pp) }
     } catch {}
+  }
+
+  // Queue next phase via QStash
+  async function queueNextPhase(nextPhase, paper, extraData={}) {
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'studentmastery.datamastery.com.au'
+    const url  = `https://${host}/api/mock-worker`
+    const payload = { jobId, userId, subjectId, slotNumber, customInstructions, confirmedScope, difficultyMode, phase: nextPhase, partialPaper: paper, ...extraData }
+    if (!process.env.QSTASH_TOKEN) { console.warn('No QSTASH_TOKEN — phase chain broken'); return false }
+    const qRes = await fetch(`https://qstash.upstash.io/v2/publish/${url}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.QSTASH_TOKEN}`, 'Content-Type': 'application/json', 'Upstash-Retries': '0' },
+      body: JSON.stringify(payload)
+    })
+    if (!qRes.ok) { console.error('QStash phase chain failed:', qRes.status, (await qRes.text()).slice(0,100)); return false }
+    console.log(`Queued phase ${nextPhase} for job ${jobId}`)
+    return true
   }
 
   try {
@@ -392,7 +408,7 @@ export default async function handler(req, res) {
     const targetQuestionCount = confirmedScope?.format?.questionCount || (longAnswerOnly ? 13 : 4)
     const marksPerQuestion = confirmedScope?.format?.marksPerQuestion || (longAnswerOnly ? '5-8' : '8-12')
     // Distribute questions across 3 calls: ~4 each for long-answer, 2 each for MCQ format
-    const qPerCall = longAnswerOnly ? Math.ceil(targetQuestionCount / 3) : 2''
+    const qPerCall = longAnswerOnly ? Math.ceil(targetQuestionCount / 3) : 2
 
     const ctx = `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
@@ -520,12 +536,26 @@ Return ONLY a valid JSON array:
       sections
     }
 
-    // Update progress to 50%
+
+    // ── PHASE 1 COMPLETE — save, queue phase 2 ──────────────────────────────
     const midPapers = await redisGet(paperKey)||[]
     const mi = midPapers.findIndex(p=>p.id===jobId)
-    if(mi>=0){ midPapers[mi].status='generating'; midPapers[mi].progress=50; midPapers[mi].paper=paper; await redisSet(paperKey,midPapers) }
+    if(mi>=0){ midPapers[mi].status='generating'; midPapers[mi].progress=25; midPapers[mi].paper=paper; await redisSet(paperKey,midPapers) }
+    if(phase === 1) {
+      console.log(`Paper ${slotNumber} phase 1 (25%) — queuing phase 2`)
+      await queueNextPhase(2, paper)
+      return res.status(200).json({ ok:true, jobId, phase:1, progress:25 })
+    }
 
-    console.log(`Paper ${slotNumber} 50% — starting calls 3+4...`)
+
+    // Restore partial paper state when running as phase 2 or 3
+    if(phase >= 2 && partialPaper) {
+      // Merge partial paper sections back into paper object
+      if(partialPaper.sections) paper.sections = partialPaper.sections
+      if(partialPaper.diagrams) paper.diagrams = partialPaper.diagrams
+      if(partialPaper.coverPage) paper.coverPage = partialPaper.coverPage
+      console.log(`Phase ${phase}: restored paper with ${paper.sections?.length||0} sections`)
+    }
 
     // ── CALL 3: Q3+Q4 (format-aware) ─────────────────────────────────────────
     const existingQCount = (paper.sections||[]).flatMap(s=>s.questions||[]).length
@@ -574,12 +604,16 @@ Return ONLY valid JSON array:
     const sectionB = paper.sections?.find(s=>s.type==='short')
     if(sectionB){ sectionB.questions=[...(sectionB.questions||[]),...saQs2]; sectionB.marks=sectionB.questions.reduce((s,q)=>s+(q.marks||0),0) }
 
-    // Update progress to 75%
+
+    // ── PHASE 2 COMPLETE — save, queue phase 3 ──────────────────────────────
     const p75 = await redisGet(paperKey)||[]
     const p75i = p75.findIndex(p=>p.id===jobId)
-    if(p75i>=0){ p75[p75i].progress=75; p75[p75i].paper=paper; await redisSet(paperKey,p75) }
-
-    console.log(`Paper ${slotNumber} 75% — starting call 4...`)
+    if(p75i>=0){ p75[p75i].progress=50; p75[p75i].paper=paper; await redisSet(paperKey,p75) }
+    if(phase === 2) {
+      console.log(`Paper ${slotNumber} phase 2 (50%) — queuing phase 3`)
+      await queueNextPhase(3, paper)
+      return res.status(200).json({ ok:true, jobId, phase:2, progress:50 })
+    }
 
     // ── CALL 4: Extended/hardest question (format-aware) ─────────────────────
     const totalQSoFar = existingQCount + saQs2.length
@@ -632,6 +666,11 @@ Return ONLY valid JSON array with ONE question:
         }]
       }
     }
+
+    // ── PHASE 3 COMPLETE — update to 75% then save ready ────────────────────
+    const p100 = await redisGet(paperKey)||[]
+    const p100i = p100.findIndex(p=>p.id===jobId)
+    if(p100i>=0){ p100[p100i].progress=75; p100[p100i].paper=paper; await redisSet(paperKey,p100) }
 
     // Final total
     const finalTotal = (paper.sections||[]).reduce((s,sec)=>s+sec.marks,0)

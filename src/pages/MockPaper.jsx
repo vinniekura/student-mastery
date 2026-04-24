@@ -527,7 +527,19 @@ export default function MockPaper() {
     finally { setSubmitting(false) }
   }
 
-  async function deletePaper(paperId) {
+  async function clearOrphans() {
+    try {
+      const token = await getToken()
+      const stuck = subjectPapers.filter(p => p.status === 'queued' || p.status === 'generating')
+      for (const p of stuck) {
+        await fetch(`/api/papers?subjectId=${selectedSubjectId}&paperId=${p.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      }
+      await loadSubjectPapers()
+    } catch(e) { setError(e.message) }
+  }
     try { const token=await getToken(); await fetch(`/api/papers?subjectId=${selectedSubjectId}&paperId=${paperId}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}}); await loadSubjectPapers() } catch {}
   }
 
@@ -729,8 +741,35 @@ export default function MockPaper() {
             {/* Pending banner */}
             {pendingPapers.length>0&&(
               <div style={{background:'rgba(217,119,6,0.1)',border:'1px solid rgba(217,119,6,0.3)',borderRadius:12,padding:'12px 16px',marginBottom:16}}>
-                <div style={{fontSize:13,fontWeight:600,color:'#d97706',marginBottom:4}}>{pendingPapers.map(p=>`Mock ${p.slotNumber}`).join(', ')} {pendingPapers.length===1?'is':'are'} being generated</div>
-                <div style={{fontSize:12,color:'#92400e'}}>4 Claude calls building MCQ + short answer + extended response — takes 2-3 minutes. You'll get an email when it's ready.</div>
+                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:12}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:'#d97706',marginBottom:4}}>
+                      {pendingPapers.map(p=>`Mock ${p.slotNumber}`).join(', ')} {pendingPapers.length===1?'is':'are'} being generated
+                    </div>
+                    <div style={{fontSize:12,color:'#92400e',marginBottom:8}}>
+                      4 Claude calls — MCQ + short answer + extended response. Takes 2-3 minutes. Close the browser — we'll email you when ready.
+                    </div>
+                    {pendingPapers.map(p => {
+                      const elapsed = Math.round((Date.now() - new Date(p.generatedAt).getTime()) / 1000)
+                      const mins = Math.floor(elapsed / 60), secs = elapsed % 60
+                      const isStuck = elapsed > 300 // 5+ minutes = stuck
+                      return (
+                        <div key={p.id} style={{fontSize:11,color:isStuck?'#dc2626':'#92400e',display:'flex',alignItems:'center',gap:6}}>
+                          <div style={{width:6,height:6,borderRadius:'50%',background:isStuck?'#dc2626':'#d97706',flexShrink:0}}/>
+                          Mock {p.slotNumber} — {isStuck?`⚠️ stuck for ${mins}m${secs}s — clear and retry`:`running for ${mins}m${secs}s`}
+                          {p.progress>0 && <span style={{marginLeft:4,fontWeight:600,color:'var(--teal2)'}}>{p.progress}%</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <button
+                    onClick={clearOrphans}
+                    title="Clear stuck papers and free slots"
+                    style={{fontSize:11,padding:'6px 12px',borderRadius:8,background:'rgba(217,119,6,0.2)',border:'1px solid rgba(217,119,6,0.4)',color:'#d97706',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0,fontWeight:600}}
+                  >
+                    🗑 Clear stuck
+                  </button>
+                </div>
               </div>
             )}
 
