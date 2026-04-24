@@ -389,6 +389,10 @@ export default async function handler(req, res) {
     const sectionType  = confirmedScope?.sectionType || 'mcq-and-long-answer'
     const longAnswerOnly = !hasMCQ || sectionType === 'long-answer-only'
     const questionStructure = confirmedScope?.format?.questionStructure || ''
+    const targetQuestionCount = confirmedScope?.format?.questionCount || (longAnswerOnly ? 13 : 4)
+    const marksPerQuestion = confirmedScope?.format?.marksPerQuestion || (longAnswerOnly ? '5-8' : '8-12')
+    // Distribute questions across 3 calls: ~4 each for long-answer, 2 each for MCQ format
+    const qPerCall = longAnswerOnly ? Math.ceil(targetQuestionCount / 3) : 2''
 
     const ctx = `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
@@ -417,14 +421,13 @@ Return ONLY a valid JSON array — no preamble, no markdown:
 
     // ── CALL 2: Short answer WITH diagrams (or long-answer format) ───────────
     const saPromptFormat = longAnswerOnly
-      ? `Generate exactly 2 long answer questions matching the EXACT format of the past papers.
+      ? `Generate exactly ${qPerCall} long answer questions matching the EXACT format of the past papers.
 CRITICAL FORMAT RULES:
 - Multi-part questions with sub-parts labelled (a)(b)(c)(d)(e)
-- Marks shown per sub-part e.g. [2 marks]  
-- Total marks per question: 9-14 marks
-- NO multiple choice options — pure written working required
-- Question introduces a scenario/distribution, sub-parts build progressively
-- Include ALL given values in the question stem or sub-part${questionStructure ? `\n- Style: ${questionStructure}` : ''}`
+- Mark allocation shown in question header e.g. [9 Marks – 1,1,2,3,2] listing marks per sub-part
+- Total marks per question: ${marksPerQuestion} marks
+- NO multiple choice — pure written working required
+- ALL given values in the question stem${questionStructure ? `\n- Style: ${questionStructure}` : ''}`
       : `Generate exactly 2 short answer questions. At least ONE must include a diagram.
 CRITICAL RULES:
 - Every calculation sub-part MUST include ALL given values in the question text
@@ -440,9 +443,10 @@ ${saPromptFormat}
 Return ONLY a valid JSON array:
 [{
   "number":${mcqQs.length+1},
-  "question":"Full scenario with ALL given values",
+  "question":"Full scenario with ALL given values. [N Marks – m1,m2,m3,...] where m1 m2 etc are marks per sub-part",
   "topic":"Topic name",
-  "marks":10,
+  "marks":7,
+  "marksBreakdown":[2,2,3],
   "parts":[{
     "part":"a",
     "question":"Sub-question with any additional given values",
@@ -532,13 +536,13 @@ Return ONLY a valid JSON array:
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
 Difficulty: ${diffStr}${memoryNote}
 
-Generate exactly 2 more long answer questions (different topics from Q1-Q2 already generated).
+Generate exactly ${qPerCall} more long answer questions (different topics from Q1-Q${qPerCall} already generated).
 CRITICAL FORMAT — match the past paper style exactly:
 - Multi-part questions with sub-parts (a)(b)(c)(d)(e)
-- Marks shown per sub-part in square brackets [N marks]
-- Total marks per question: 9-14 marks
+- Mark allocation in header e.g. [9 Marks – 1,1,2,3,2]
+- Total marks per question: ${marksPerQuestion} marks
 - NO multiple choice — pure written working
-- ALL given values included in question stem or sub-part${questionStructure?`\n- Style: ${questionStructure}`:''}
+- ALL given values in the question stem${questionStructure?`\n- Style: ${questionStructure}`:''}
 
 Return ONLY valid JSON array:
 [{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":12,"parts":[{"part":"a","question":"Sub-question","marks":2,"answer":"Full solution","markingCriteria":"Award marks for..."}]}]`
@@ -585,9 +589,9 @@ Return ONLY valid JSON array:
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
 Difficulty: ${difficultyMode==='exam-plus'?'Maximum difficulty':'Match past paper difficulty'}
 
-Generate exactly 1 harder multi-part question — the most challenging question in the paper.
-Synthesis of 2-3 concepts, 12-16 marks, 5-6 sub-parts (a)(b)(c)(d)(e)(f).
-Final part must require evaluation, interpretation, or multi-step reasoning.
+Generate exactly ${qPerCall} harder multi-part questions — these are the most challenging questions in the paper.
+Each question: synthesis of 2-3 concepts, 5-8 marks, 3-5 sub-parts (a)(b)(c)(d)(e).
+Final sub-part of last question should require evaluation or interpretation.
 ALL given values in question stem. NO multiple choice.${questionStructure?`\nStyle: ${questionStructure}`:''}
 
 Return ONLY valid JSON array with ONE question:

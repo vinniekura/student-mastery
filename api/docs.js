@@ -184,8 +184,10 @@ Analyse the exam papers and extract:
 3. EXAM FORMAT — CRITICAL: look very carefully at the actual structure:
    - Does this paper have Multiple Choice questions? (Look for A. B. C. D. options)
    - Does this paper have ONLY long answer / multi-part questions like (a)(b)(c)(d)?
+   - EXACTLY how many questions does the paper have? (Count them)
+   - What is the mark allocation format? e.g. "[9 Marks – 1,1,2,3,2]" or "[4 marks]"
    - What are the actual section names (if any)?
-   - Total marks, time allowed
+   - Total marks, time allowed, marks per question
 
 4. SPECIFIC SUB-TOPICS — list every specific concept, technique, formula tested.
    Rules:
@@ -230,8 +232,10 @@ Return ONLY valid JSON, no markdown:
   "format": {
     "totalMarks": 77,
     "timeMins": 55,
+    "questionCount": 13,
+    "marksPerQuestion": "5-8",
     "sections": ["Long answer questions — 77 marks total"],
-    "questionStructure": "Multi-part questions with (a)(b)(c)(d) sub-parts. Marks shown in [N Marks] format.",
+    "questionStructure": "Multi-part questions with (a)(b)(c)(d) sub-parts. Mark allocation shown as [9 Marks – 1,1,2,3,2] in question header.",
     "noMCQ": true
   },
   "curriculum": "BSSS",
