@@ -406,28 +406,11 @@ export default async function handler(req, res) {
     const sectionType  = confirmedScope?.sectionType || 'mcq-and-long-answer'
     const longAnswerOnly = !hasMCQ || sectionType === 'long-answer-only'
     const questionStructure = confirmedScope?.format?.questionStructure || ''
-    // ── Format parameters — all driven by detected scope, never hardcoded ──────
-    const detectedQuestionCount = confirmedScope?.format?.questionCount
-    const detectedMarksPerQ     = confirmedScope?.format?.marksPerQuestion
-    const detectedTotalMarks    = confirmedScope?.format?.totalMarks
-    const detectedTimeMins      = confirmedScope?.format?.timeMins
-
-    // Fallback: infer from totalMarks if questionCount not detected
-    // e.g. 77 marks ÷ 6 marks/q ≈ 13 questions
-    const inferredQCount = detectedTotalMarks
-      ? Math.round(detectedTotalMarks / (longAnswerOnly ? 6 : 10))
-      : (longAnswerOnly ? 12 : 4)
-
-    const targetQuestionCount = detectedQuestionCount || inferredQCount
-    const marksPerQuestion    = detectedMarksPerQ || (longAnswerOnly ? '5-8' : '8-12')
-
-    // Split across 4 phases — each phase generates ~targetQuestionCount/4 questions
-    // Cap at 4 per phase to stay within token limits
-    const qPerPhase = Math.min(4, Math.ceil(targetQuestionCount / 4))
-    const qPerCall  = longAnswerOnly ? qPerPhase : 2
-
-    console.log(`Format: ${targetQuestionCount} questions × ~${marksPerQuestion} marks (detected: questionCount=${detectedQuestionCount}, totalMarks=${detectedTotalMarks})`)
-    console.log(`Generation: ${qPerCall} questions/phase × 4 phases = ~${qPerCall*4} total questions`)
+    // ── Format — read directly from confirmed scope ─────────────────────────────
+    const targetQuestionCount = confirmedScope?.format?.questionCount || (longAnswerOnly ? 12 : 10)
+    const marksPerQuestion    = confirmedScope?.format?.marksPerQuestion || (longAnswerOnly ? '5-8' : '8-12')
+    const qPerCall = longAnswerOnly ? Math.min(4, Math.ceil(targetQuestionCount / 4)) : 2
+    console.log(`Scope: ${targetQuestionCount}q × ${marksPerQuestion}marks | qPerCall=${qPerCall} | phase=${phase}`)
 
     const ctx = `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}

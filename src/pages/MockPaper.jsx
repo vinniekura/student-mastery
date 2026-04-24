@@ -197,7 +197,7 @@ function ScopeConfirmation({ scope, onConfirm, onReanalyse, analysing, onGenerat
   function buildConfirmedScope() {
     return {
       term, examType, topics: topicList,
-      format: { timeMins:Number(timeMins)||60, totalMarks:Number(totalMarks)||100, sections:scope.format?.sections||[], questionStructure:scope.format?.questionStructure||'', noMCQ:!hasMCQ },
+      format: { timeMins:Number(timeMins)||60, totalMarks:Number(totalMarks)||100, sections:scope.format?.sections||[], questionStructure:scope.format?.questionStructure||'', noMCQ:!hasMCQ, questionCount:scope.format?.questionCount||null, marksPerQuestion:scope.format?.marksPerQuestion||null },
       curriculum: scope.curriculum, confidence: scope.confidence,
       difficultyProfile: scope.difficultyProfile||null, difficultyMode: difficulty,
       levelDescription: scope.levelDescription||'', hasMCQ,
@@ -240,7 +240,7 @@ function ScopeConfirmation({ scope, onConfirm, onReanalyse, analysing, onGenerat
           <div style={{width:32,height:32,borderRadius:'50%',background:'var(--teal-bg)',border:'2px solid var(--teal2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,flexShrink:0}}>✓</div>
           <div>
             <div style={{fontSize:15,fontWeight:700,color:'var(--text)'}}>Your exam format understood</div>
-            <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{topicList.length} topics · {hasMCQ?'MCQ + short answer + extended':'Long answer only'} · {timeMins} min · {totalMarks||'~'} marks</div>
+            <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{topicList.length} topics · {hasMCQ?'MCQ + short answer + extended':'Long answer only'} · {timeMins} min · {totalMarks||'~'} marks{scope.format?.questionCount?` · ${scope.format.questionCount} questions`:''}</div>
           </div>
         </div>
 
@@ -727,7 +727,7 @@ export default function MockPaper() {
             <div style={{fontSize:20}}>✓</div>
             <div style={{flex:1}}>
               <div style={{fontSize:13,fontWeight:600,color:'var(--teal2)'}}>{scope.summaryLine||scope.term}</div>
-              <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{scope.topics?.length} topics · {scope.hasMCQ===false?'Long answer only':'MCQ + Long answer'} · {scope.format?.timeMins||60} min</div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{scope.topics?.length} topics · {scope.hasMCQ===false?'Long answer only':'MCQ + Long answer'} · {scope.format?.timeMins||60} min · {scope.format?.totalMarks||'?'} marks{scope.format?.questionCount?` · ${scope.format.questionCount} questions`:''}</div>
             </div>
             <button onClick={async()=>{const t=await getToken();await fetch(`/api/docs?subjectId=${selectedSubjectId}&action=scope`,{method:'DELETE',headers:{Authorization:`Bearer ${t}`}});setScope(null)}} style={{fontSize:11,padding:'4px 12px',borderRadius:8,background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text3)',cursor:'pointer'}}>
               Re-analyse
