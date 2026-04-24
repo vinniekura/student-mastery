@@ -1,417 +1,313 @@
-// api/ingest-doc.js
-// Ingests PDF, DOCX, TXT, image files into Redis for a subject
-// NO unit selection required — auto-detects document role and metadata
-// Fixes: multi-part form handling, large files, encoding issues
-
 import { redisGet, redisSet } from '../src/lib/redis.js'
 import { requireAuth } from '../src/lib/clerk.js'
+import { extractTextViaVision, extractPdfImages } from '../src/lib/ocr.js'
 
-function genId() {
-  return Math.random().toString(36).slice(2, 10)
-}
-
-function sanitizeText(text) {
-  if (!text) return ''
-  return text
-    .replace(/[\uD800-\uDFFF]/g, '')   // remove lone surrogates
-    .replace(/\u0000/g, '')             // remove null bytes
-    .replace(/[^\x09\x0A\x0D\x20-\x7E\x80-\xFF\u0100-\uFFFC]/g, ' ')
-    .replace(/\s{4,}/g, '\n\n')
-    .trim()
-}
-
-function chunkText(text, chunkSize = 800, overlap = 100) {
-  const clean = sanitizeText(text)
-  if (clean.length === 0) return []
-  const chunks = []
-  let start = 0
-  while (start < clean.length) {
-    const end = Math.min(start + chunkSize, clean.length)
-    const chunk = clean.slice(start, end).trim()
-    if (chunk.length > 50) chunks.push(chunk)
-    start = end - overlap
-    if (start >= clean.length) break
-  }
-  return chunks
-}
-
-// ── Multipart parser ──────────────────────────────────────────────────────────
-
-function readRawBody(req) {
+async function parseBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    req.on('data', c => chunks.push(c))
+    req.on('data', chunk => chunks.push(chunk))
     req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
 }
 
-function parseMultipart(buffer, boundary) {
-  const boundaryBuf = Buffer.from('--' + boundary)
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+}
+
+function chunkText(text, size = 800, overlap = 100) {
+  const chunks = []
+  let i = 0
+  while (i < text.length) {
+    chunks.push(text.slice(i, i + size))
+    i += size - overlap
+    if (i + overlap >= text.length) break
+  }
+  if (text.length > 0 && chunks.length === 0) chunks.push(text.slice(i))
+  return chunks.filter(c => c.trim().length > 20)
+}
+
+function extractDocxText(buffer) {
+  const str = buffer.toString('utf8', 0, Math.min(buffer.length, 5000000))
+  const texts = []
+  const regex = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g
+  let match
+  while ((match = regex.exec(str)) !== null) {
+    if (match[1].trim()) texts.push(match[1])
+  }
+  return texts.join(' ').replace(/\s+/g, ' ').trim()
+}
+
+function splitMultipart(body, boundary) {
   const parts = []
-  let pos = 0
-
-  while (pos < buffer.length) {
-    const start = indexOf(buffer, boundaryBuf, pos)
-    if (start === -1) break
-    pos = start + boundaryBuf.length
-
-    if (buffer[pos] === 0x2D && buffer[pos + 1] === 0x2D) break // --boundary--
-
-    if (buffer[pos] === 0x0D) pos += 2  // \r\n
-
-    // Read headers
-    const headerEnd = indexOf(buffer, Buffer.from('\r\n\r\n'), pos)
+  const boundaryBuf = Buffer.from('--' + boundary)
+  let start = 0
+  while (start < body.length) {
+    const boundaryIdx = body.indexOf(boundaryBuf, start)
+    if (boundaryIdx === -1) break
+    const partStart = boundaryIdx + boundaryBuf.length
+    if (body[partStart] === 45 && body[partStart + 1] === 45) break
+    const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), partStart)
     if (headerEnd === -1) break
-    const headerStr = buffer.slice(pos, headerEnd).toString('utf8')
-    pos = headerEnd + 4
-
-    // Find next boundary
-    const nextBoundary = indexOf(buffer, boundaryBuf, pos)
-    const dataEnd = nextBoundary === -1 ? buffer.length : nextBoundary - 2
-
+    const headerStr = body.slice(partStart + 2, headerEnd).toString('utf8')
     const headers = {}
     for (const line of headerStr.split('\r\n')) {
       const colon = line.indexOf(':')
-      if (colon !== -1) {
-        headers[line.slice(0, colon).toLowerCase().trim()] = line.slice(colon + 1).trim()
-      }
+      if (colon > -1) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim()
     }
-
-    parts.push({ headers, data: buffer.slice(pos, dataEnd) })
-    pos = nextBoundary === -1 ? buffer.length : nextBoundary
+    const nextBoundary = body.indexOf(boundaryBuf, headerEnd + 4)
+    const dataEnd = nextBoundary === -1 ? body.length : nextBoundary - 2
+    parts.push({ headers, data: body.slice(headerEnd + 4, dataEnd) })
+    start = nextBoundary === -1 ? body.length : nextBoundary
   }
   return parts
 }
 
-function indexOf(buf, search, start = 0) {
-  for (let i = start; i <= buf.length - search.length; i++) {
-    let found = true
-    for (let j = 0; j < search.length; j++) {
-      if (buf[i + j] !== search[j]) { found = false; break }
-    }
-    if (found) return i
-  }
-  return -1
-}
-
-function parseContentDisposition(header) {
-  if (!header) return {}
-  const result = {}
-  const nameMatch = header.match(/name="([^"]*)"/)
-  const filenameMatch = header.match(/filename="([^"]*)"/)
-  if (nameMatch) result.name = nameMatch[1]
-  if (filenameMatch) result.filename = filenameMatch[1]
-  return result
-}
-
-// ── Text extractors ───────────────────────────────────────────────────────────
-
-function extractFromPdf(buffer) {
-  try {
-    const str = buffer.toString('latin1')
-    const textParts = []
-
-    // Extract text from stream objects
-    const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g
-    let match
-    while ((match = streamRegex.exec(str)) !== null) {
-      const streamContent = match[1]
-      // Extract text operators
-      const tjRegex = /\(([^)]*)\)\s*Tj/g
-      const tjMatch2 = /\[((?:[^[\]]*|\[[^\]]*\])*)\]\s*TJ/g
-      let m
-      while ((m = tjRegex.exec(streamContent)) !== null) {
-        textParts.push(m[1].replace(/\\n/g, '\n').replace(/\\r/g, '').replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\'))
-      }
-      while ((m = tjMatch2.exec(streamContent)) !== null) {
-        const inner = m[1].replace(/\([^)]*\)/g, s => s.slice(1,-1))
-        textParts.push(inner)
-      }
-    }
-
-    // Also try plain text extraction
-    const plainRegex = /BT\s*([\s\S]*?)\s*ET/g
-    while ((match = plainRegex.exec(str)) !== null) {
-      const bt = match[1]
-      const subMatch = bt.match(/\(([^)]{2,})\)/g)
-      if (subMatch) {
-        textParts.push(...subMatch.map(s => s.slice(1,-1)))
-      }
-    }
-
-    const combined = textParts.join(' ').replace(/\s+/g, ' ').trim()
-    return combined.length > 100 ? combined : null
-  } catch {
-    return null
-  }
-}
-
-function extractFromDocx(buffer) {
-  try {
-    // DOCX is a ZIP — find word/document.xml
-    const str = buffer.toString('binary')
-    // Simple zip entry finder
-    const xmlStart = str.indexOf('<?xml')
-    const wordDocIdx = str.indexOf('word/document.xml')
-
-    // Find XML content sections
-    const textMatches = []
-    const wTRegex = /<w:t[^>]*>([^<]*)<\/w:t>/g
-    const bufStr = buffer.toString('utf8', 0, Math.min(buffer.length, 5 * 1024 * 1024))
-    let m
-    while ((m = wTRegex.exec(bufStr)) !== null) {
-      if (m[1].trim().length > 0) textMatches.push(m[1])
-    }
-
-    if (textMatches.length > 0) {
-      return textMatches.join(' ').replace(/\s+/g, ' ').trim()
-    }
-
-    // Fallback: try reading as plain text if XML extraction fails
-    const plainText = buffer.toString('utf8').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-    return plainText.length > 100 ? plainText : null
-  } catch {
-    return null
-  }
-}
-
-function extractFromTxt(buffer) {
-  try {
-    // Try UTF-8 first, fallback to latin1
-    let text = buffer.toString('utf8')
-    if (text.includes('\uFFFD')) {
-      text = buffer.toString('latin1')
-    }
-    return text.length > 0 ? text : null
-  } catch {
-    return buffer.toString('latin1')
-  }
-}
-
-// ── Document role detection ───────────────────────────────────────────────────
-
-function detectDocumentRole(filename, text) {
-  const fname = (filename || '').toLowerCase()
-  const sample = (text || '').slice(0, 2000).toLowerCase()
-
-  // Handwritten/solution sheet detection — filter these OUT
-  const isSolutionSheet = (
-    /solution|answer.?sheet|marking.?guide|mark.?scheme|worked.?solution/i.test(fname) ||
-    /^(solution|answer|mark)/i.test(fname) ||
-    (sample.includes('solution') && sample.includes('answer') && sample.length < 500)
-  )
-  if (isSolutionSheet) return 'solution_sheet'
-
-  // Past paper detection
-  const isPastPaper = (
-    /exam|test|paper|assessment|past|sample|practice|trial/i.test(fname) ||
-    /section [ab]|multiple choice|short answer|time allowed|total marks/i.test(sample) ||
-    /instructions to candidates|answer (all|the following)/i.test(sample)
-  )
-  if (isPastPaper) return 'past_paper'
-
-  // Notes/context
-  return 'notes'
-}
-
-// ── Claude text extraction fallback (for images/scans) ──────────────────────
-
-async function extractViaVision(buffer, mimeType, filename) {
-  try {
-    const base64 = buffer.toString('base64')
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mimeType, data: base64 }
-            },
-            {
-              type: 'text',
-              text: 'Extract ALL text from this image exactly as it appears. Include questions, answers, diagrams labels, everything. Output raw text only.'
-            }
-          ]
-        }]
-      })
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    return data.content?.[0]?.text || null
-  } catch {
-    return null
-  }
-}
-
-// ── Main handler ──────────────────────────────────────────────────────────────
-
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  // Route to format extraction if action=extract-format
+  const { url = '', method } = req
+  const qIdx = url.indexOf('?')
+  const params = new URLSearchParams(qIdx >= 0 ? url.slice(qIdx + 1) : '')
+  if (params.get('action') === 'extract-format') {
+    let userId
+    try { userId = await requireAuth(req) }
+    catch (e) { res.status(401).json({ error: 'Unauthorized' }); return }
+    try { return await extractFormatHandler(req, res, userId) }
+    catch (e) { res.status(500).json({ error: e.message }); return }
+  }
+
+  if (method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return }
 
   let userId
-  try { userId = await requireAuth(req) } catch { return res.status(401).json({ error: 'Unauthorized' }) }
+  try { userId = await requireAuth(req) }
+  catch (e) { res.status(401).json({ error: 'Unauthorized' }); return }
 
   try {
+    const body = await parseBody(req)
     const contentType = req.headers['content-type'] || ''
-    if (!contentType.includes('multipart/form-data')) {
-      return res.status(400).json({ error: 'Must be multipart/form-data' })
-    }
-
     const boundaryMatch = contentType.match(/boundary=([^\s;]+)/)
-    if (!boundaryMatch) return res.status(400).json({ error: 'No boundary found' })
-    const boundary = boundaryMatch[1]
+    if (!boundaryMatch) { res.status(400).json({ error: 'Expected multipart/form-data' }); return }
 
-    const rawBody = await readRawBody(req)
-    const parts = parseMultipart(rawBody, boundary)
-
-    // Extract fields from parts
-    let subjectId = null
-    const files = []
+    const parts = splitMultipart(body, boundaryMatch[1])
+    let fileBuffer = null, filename = 'unknown', subjectId = null
+    let fileType = 'pdf', docType = 'notes', mimeType = '', unit = ''
 
     for (const part of parts) {
-      const disp = parseContentDisposition(part.headers['content-disposition'] || '')
-      if (!disp.name) continue
-
-      if (disp.name === 'subjectId') {
+      const disposition = part.headers['content-disposition'] || ''
+      if (disposition.includes('name="subjectId"')) {
         subjectId = part.data.toString('utf8').trim()
-      } else if (disp.name === 'files' || disp.name === 'file') {
-        if (disp.filename && part.data.length > 0) {
-          files.push({
-            filename: disp.filename,
-            mimeType: part.headers['content-type'] || 'application/octet-stream',
-            data: part.data
+      } else if (disposition.includes('name="docType"')) {
+        docType = part.data.toString('utf8').trim() || 'notes'
+      } else if (disposition.includes('name="unit"')) {
+        unit = part.data.toString('utf8').trim()
+      } else if (disposition.includes('name="file"')) {
+        const nameMatch = disposition.match(/filename="([^"]+)"/)
+        if (nameMatch) filename = nameMatch[1]
+        fileBuffer = part.data
+        mimeType = part.headers['content-type'] || ''
+        const lower = filename.toLowerCase()
+        if (lower.endsWith('.pdf'))                    fileType = 'pdf'
+        else if (lower.endsWith('.docx'))             fileType = 'docx'
+        else if (lower.match(/\.(jpg|jpeg)$/))        fileType = 'jpg'
+        else if (lower.endsWith('.png'))              fileType = 'png'
+        else if (lower.endsWith('.txt'))              fileType = 'txt'
+        else fileType = 'txt'
+      }
+    }
+
+    if (!fileBuffer || !subjectId) { res.status(400).json({ error: 'Missing file or subjectId' }); return }
+
+    let rawText = ''
+    let ocrUsed = false
+
+    if (fileType === 'jpg' || fileType === 'png') {
+      // Direct image — use vision OCR
+      const imageMime = fileType === 'png' ? 'image/png' : 'image/jpeg'
+      rawText = await extractTextViaVision(fileBuffer, imageMime)
+      ocrUsed = true
+
+    } else if (fileType === 'pdf') {
+      // ── PDF: go straight to Claude native PDF reading ────────────────────
+      // Skip regex extraction — it returns binary garbage for modern PDFs
+      // Claude haiku handles PDFs natively and is fast enough within 300s
+      try {
+        const base64Pdf = fileBuffer.toString('base64')
+        const pdfRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': process.env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',   // fastest model — critical for 300s limit
+            max_tokens: 4000,
+            messages: [{
+              role: 'user',
+              content: [
+                {
+                  type: 'document',
+                  source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf }
+                },
+                {
+                  type: 'text',
+                  text: 'Extract ALL text from this document including questions, answers, formulas, diagrams descriptions, and instructions. Preserve the structure and numbering. Output only the raw extracted text, nothing else.'
+                }
+              ]
+            }]
           })
-        }
-      }
-    }
-
-    if (!subjectId) return res.status(400).json({ error: 'subjectId required' })
-    if (files.length === 0) return res.status(400).json({ error: 'No files found in upload' })
-
-    // Get existing docs
-    const docsKey = `sm:docs:${userId}:${subjectId}`
-    const existingDocs = await redisGet(docsKey) || []
-
-    const results = []
-
-    for (const file of files) {
-      const { filename, mimeType, data } = file
-      const ext = filename.split('.').pop()?.toLowerCase() || ''
-
-      let text = null
-      let extractionMethod = 'direct'
-
-      // Extract text based on file type
-      if (ext === 'pdf' || mimeType === 'application/pdf') {
-        text = extractFromPdf(data)
-        extractionMethod = 'pdf-parse'
-        if (!text || text.length < 100) {
-          // Try vision for scanned/image PDFs — first page only
-          // For now just flag it
-          text = text || ''
-          if (text.length < 100) {
-            results.push({
-              filename,
-              status: 'warning',
-              message: 'PDF appears to be scanned/image-based. Text extraction was limited. Try uploading a typed/digital PDF for best results.'
-            })
-            extractionMethod = 'scan-limited'
-          }
-        }
-      } else if (ext === 'docx' || mimeType.includes('wordprocessingml') || mimeType.includes('msword')) {
-        text = extractFromDocx(data)
-        extractionMethod = 'docx-parse'
-      } else if (ext === 'txt' || mimeType.startsWith('text/')) {
-        text = extractFromTxt(data)
-        extractionMethod = 'txt'
-      } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext) || mimeType.startsWith('image/')) {
-        // Vision extraction for images
-        const visionMime = mimeType.startsWith('image/') ? mimeType : `image/${ext}`
-        text = await extractViaVision(data, visionMime, filename)
-        extractionMethod = 'vision-ocr'
-        if (!text) {
-          results.push({ filename, status: 'error', message: 'Could not extract text from image. Make sure the image is clear and legible.' })
-          continue
-        }
-      } else {
-        results.push({ filename, status: 'error', message: `Unsupported file type: .${ext}. Supported: PDF, DOCX, TXT, PNG, JPG` })
-        continue
-      }
-
-      if (!text || text.length < 30) {
-        results.push({ filename, status: 'error', message: 'No readable text found in this file. It may be encrypted or image-only.' })
-        continue
-      }
-
-      // Detect role (past paper vs notes vs solution sheet)
-      const role = detectDocumentRole(filename, text)
-
-      if (role === 'solution_sheet') {
-        results.push({
-          filename,
-          status: 'filtered',
-          message: 'This looks like a solution/marking sheet — it\'s been filtered out to avoid polluting exam questions with answers.',
-          role
         })
-        continue
+
+        if (pdfRes.ok) {
+          const pdfData = await pdfRes.json()
+          const extracted = pdfData.content?.[0]?.text || ''
+          if (extracted.length > 50) {
+            rawText = extracted
+            ocrUsed = true
+            console.log('Claude native PDF reading succeeded:', extracted.length, 'chars')
+          } else {
+            console.log('Claude PDF returned short response, trying image OCR fallback')
+          }
+        } else {
+          const errText = await pdfRes.text()
+          console.error('Claude PDF API error:', pdfRes.status, errText.slice(0, 200))
+        }
+      } catch (e) {
+        console.error('Claude PDF reading failed:', e.message)
       }
 
-      // Chunk
-      const chunks = chunkText(text, 800, 100)
-
-      const doc = {
-        id: genId(),
-        name: filename,
-        role,
-        extractionMethod,
-        uploadedAt: new Date().toISOString(),
-        charCount: text.length,
-        chunkCount: chunks.length,
-        chunks
+      // Fallback: image OCR on first 3 pages if Claude reading failed
+      if (rawText.length < 50) {
+        console.log('Trying image OCR fallback on PDF pages...')
+        try {
+          const images = extractPdfImages(fileBuffer)
+          if (images.length > 0) {
+            const ocrResults = []
+            for (const img of images.slice(0, 3)) {
+              try {
+                const text = await extractTextViaVision(img.data, img.mimeType)
+                if (text && text.length > 20) ocrResults.push(text)
+              } catch (e) {
+                console.error('Image OCR failed:', e.message)
+              }
+            }
+            if (ocrResults.length > 0) {
+              rawText = ocrResults.join('\n\n')
+              ocrUsed = true
+            }
+          }
+        } catch (e) {
+          console.error('PDF image extraction failed:', e.message)
+        }
       }
 
-      existingDocs.push(doc)
-      results.push({
-        filename,
-        status: 'ok',
-        role,
-        chunks: chunks.length,
-        message: role === 'past_paper'
-          ? `✅ Past exam paper detected — will define format and topics.`
-          : `✅ Notes/context detected — will enrich topic coverage.`
-      })
+    } else if (fileType === 'docx') {
+      rawText = extractDocxText(fileBuffer)
+    } else {
+      rawText = fileBuffer.toString('utf8')
     }
 
-    // Save updated docs (cap at 30 per subject)
-    await redisSet(docsKey, existingDocs.slice(-30))
+    if (!rawText || rawText.length < 30) {
+      res.status(400).json({
+        error: 'Could not extract text from this file. For handwritten notes, take a clear photo and upload as JPG/PNG. For scanned PDFs, ensure the scan is clear.'
+      })
+      return
+    }
 
-    // Invalidate any existing scope so user re-analyses
-    await redisSet(`sm:scope:${userId}:${subjectId}`, null)
+    const textChunks = chunkText(rawText)
+    const doc = {
+      id: genId(),
+      filename,
+      fileType,
+      docType,
+      unit: unit || null,
+      ocrUsed,
+      charCount: rawText.length,
+      chunkCount: textChunks.length,
+      chunks: textChunks,
+      uploadedAt: new Date().toISOString()
+    }
 
-    const successCount = results.filter(r => r.status === 'ok').length
-    const errorCount = results.filter(r => r.status === 'error').length
-    const filteredCount = results.filter(r => r.status === 'filtered').length
+    const key = `sm:docs:${userId}:${subjectId}`
+    const existing = await redisGet(key) || []
+    existing.push(doc)
+    await redisSet(key, existing)
 
-    return res.status(200).json({
+    res.status(200).json({
       ok: true,
-      totalDocs: existingDocs.length,
-      results,
-      summary: `${successCount} file${successCount !== 1 ? 's' : ''} ingested${filteredCount > 0 ? `, ${filteredCount} solution sheet${filteredCount !== 1 ? 's' : ''} filtered out` : ''}${errorCount > 0 ? `, ${errorCount} failed` : ''}. Click "Analyse my documents" to extract your exam format.`,
-      needsAnalysis: true  // tell frontend to prompt for re-analysis
+      docId: doc.id,
+      filename,
+      docType,
+      unit: doc.unit,
+      ocrUsed,
+      chunkCount: textChunks.length,
+      charCount: rawText.length
     })
 
   } catch (e) {
-    console.error('ingest-doc error:', e.message, e.stack)
-    return res.status(500).json({ error: `Ingestion failed: ${e.message}` })
+    console.error('ingest-doc error:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+}
+
+// ── Format extraction handler (unchanged) ─────────────────────────────────────
+export async function extractFormatHandler(req, res, userId) {
+  const { url = '' } = req
+  const qIdx = url.indexOf('?')
+  const params = new URLSearchParams(qIdx >= 0 ? url.slice(qIdx + 1) : '')
+  const subjectId = params.get('subjectId')
+  if (!subjectId) { res.status(400).json({ error: 'subjectId required' }); return }
+
+  const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
+  const pastPapers = allDocs.filter(d => d.docType === 'past-paper')
+  if (pastPapers.length === 0) {
+    res.status(400).json({ error: 'No past papers uploaded yet.' }); return
+  }
+
+  const allChunks = pastPapers.flatMap(d => d.chunks || [])
+  let sampleText = ''
+  let charCount = 0
+  for (const chunk of allChunks) {
+    if (charCount + chunk.length > 3000) break
+    sampleText += chunk + '\n'
+    charCount += chunk.length
+  }
+
+  const subjects = await redisGet(`sm:subjects:${userId}`) || []
+  const subject = subjects.find(s => s.id === subjectId) || {}
+
+  const formatRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      messages: [
+        { role: 'user', content: `Extract the exam format from this past paper content for ${subject.name || 'Physics'} ${subject.examBoard || 'BSSS'}:\n\n${sampleText}\n\nReturn JSON only: {"sections":[{"name":"...","type":"mcq|short|extended","marks":0,"questionCount":0,"marksPerQ":0,"instructions":"..."}],"totalMarks":0,"timeLimitMins":0,"allowedMaterials":"...","style":"..."}` },
+        { role: 'assistant', content: '{' }
+      ]
+    })
+  })
+
+  if (!formatRes.ok) { res.status(500).json({ error: 'Format extraction failed' }); return }
+
+  const formatData = await formatRes.json()
+  const raw = '{' + (formatData.content?.[0]?.text || '{}')
+  try {
+    const fmt = JSON.parse(raw.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim())
+    const subjects2 = await redisGet(`sm:subjects:${userId}`) || []
+    const idx = subjects2.findIndex(s => s.id === subjectId)
+    if (idx >= 0) {
+      subjects2[idx].extractedFormat = fmt
+      subjects2[idx].extractedFormatAt = new Date().toISOString()
+      await redisSet(`sm:subjects:${userId}`, subjects2)
+    }
+    res.status(200).json({ ok: true, format: fmt })
+  } catch (e) {
+    res.status(500).json({ error: 'Could not parse format response' })
   }
 }
