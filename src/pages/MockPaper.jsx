@@ -683,8 +683,8 @@ export default function MockPaper() {
 
       {selectedSubjectId && (<>
 
-        {/* Stage 1+2: Upload + Analyse — always visible when subject selected */}
-        {(!scopeConfirmed || !hasDocs) && (
+        {/* Stage 1+2: Upload + Analyse — collapsible when scope already confirmed */}
+        {!scopeConfirmed && (
           <UploadAndAnalyse
             subjectId={selectedSubjectId}
             subjectDocs={subjectDocs}
@@ -723,8 +723,8 @@ export default function MockPaper() {
 
         {error && <div style={{padding:'10px 14px',background:'var(--red-bg)',border:'1px solid rgba(220,38,38,0.3)',borderRadius:10,fontSize:13,color:'var(--red)',marginBottom:16}}>{error}</div>}
 
-        {/* Stage 4: Papers grid — only after scope confirmed */}
-        {scopeConfirmed && (
+        {/* Stage 4: Papers grid — show if papers exist OR scope confirmed */}
+        {(scopeConfirmed || subjectPapers.length > 0) && (
           <>
             {/* Pending banner */}
             {pendingPapers.length>0&&(
@@ -779,12 +779,17 @@ export default function MockPaper() {
 
                     {isNextSlot&&(
                       <div style={{flex:1}}>
-                        {gaps.length>0&&<><div style={{fontSize:10,color:'#d97706',marginBottom:4,fontWeight:600}}>Will cover gaps:</div>
+                        {gaps.length>0&&scopeConfirmed&&<><div style={{fontSize:10,color:'#d97706',marginBottom:4,fontWeight:600}}>Will cover gaps:</div>
                         {gaps.slice(0,4).map(t=><div key={t} style={{fontSize:9,padding:'1px 0',color:'#d97706'}}>→ {t.length>24?t.slice(0,24)+'…':t}</div>)}
                         {gaps.length>4&&<div style={{fontSize:9,color:'var(--text3)'}}>+{gaps.length-4} more</div>}</>}
-                        <button onClick={()=>generate()} disabled={submitting} style={{marginTop:8,fontSize:11,padding:'6px 0',borderRadius:8,background:'var(--teal-bg)',border:'1px solid var(--teal-border)',color:'var(--teal2)',cursor:'pointer',width:'100%',fontWeight:600}}>
-                          {submitting?'Queuing...':'+ Generate'}
-                        </button>
+                        {scopeConfirmed
+                          ? <button onClick={()=>generate()} disabled={submitting} style={{marginTop:8,fontSize:11,padding:'6px 0',borderRadius:8,background:'var(--teal-bg)',border:'1px solid var(--teal-border)',color:'var(--teal2)',cursor:'pointer',width:'100%',fontWeight:600}}>
+                              {submitting?'Queuing...':'+ Generate'}
+                            </button>
+                          : <div style={{marginTop:8,fontSize:9,color:'var(--text3)',padding:'5px 6px',background:'var(--bg2)',borderRadius:6,border:'1px dashed var(--border)',textAlign:'center',lineHeight:1.4}}>
+                              Analyse papers above to generate
+                            </div>
+                        }
                       </div>
                     )}
 
