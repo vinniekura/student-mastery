@@ -505,7 +505,7 @@ export default function MockPaper() {
     setSubmitting(true); setError(null); setSlotsExhausted(false); setConfirmReplace(null)
     try {
       const token = await getToken()
-      const res  = await fetch('/api/generate-mock',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({subjectId:selectedSubjectId,customInstructions,replaceSlot,confirmedScope:scope?.confirmed?scope:null,difficultyMode:scope?.difficultyMode||'match'})})
+      const res  = await fetch('/api/generate-mock',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({subjectId:selectedSubjectId,customInstructions,replaceSlot,confirmedScope:scope||null,difficultyMode:scope?.difficultyMode||'match'})})
       const data = await res.json()
       if (!res.ok) throw new Error(data.error||'Failed to queue paper')
       if (data.slotsExhausted) { setSlotsExhausted(true); return }
@@ -683,8 +683,8 @@ export default function MockPaper() {
 
       {selectedSubjectId && (<>
 
-        {/* Stage 1+2: Upload + Analyse — collapsible when scope already confirmed */}
-        {!scopeConfirmed && (
+        {/* Stage 1+2: Upload + Analyse — hide only when scope confirmed AND papers already exist */}
+        {(!scopeConfirmed || subjectPapers.length === 0) && (
           <UploadAndAnalyse
             subjectId={selectedSubjectId}
             subjectDocs={subjectDocs}
@@ -782,7 +782,7 @@ export default function MockPaper() {
                         {gaps.length>0&&scopeConfirmed&&<><div style={{fontSize:10,color:'#d97706',marginBottom:4,fontWeight:600}}>Will cover gaps:</div>
                         {gaps.slice(0,4).map(t=><div key={t} style={{fontSize:9,padding:'1px 0',color:'#d97706'}}>→ {t.length>24?t.slice(0,24)+'…':t}</div>)}
                         {gaps.length>4&&<div style={{fontSize:9,color:'var(--text3)'}}>+{gaps.length-4} more</div>}</>}
-                        {scopeConfirmed
+                        {(scopeConfirmed || readyPapers.length > 0)
                           ? <button onClick={()=>generate()} disabled={submitting} style={{marginTop:8,fontSize:11,padding:'6px 0',borderRadius:8,background:'var(--teal-bg)',border:'1px solid var(--teal-border)',color:'var(--teal2)',cursor:'pointer',width:'100%',fontWeight:600}}>
                               {submitting?'Queuing...':'+ Generate'}
                             </button>
