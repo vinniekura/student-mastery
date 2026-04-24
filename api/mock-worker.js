@@ -1,19 +1,4 @@
-// api/mock-worker.js
-// Generates a mock paper that EXACTLY matches the format of real past papers
-// Uses confirmedScope from analyse-docs for question counts, section structure, topics
-
-import { redisGet, redisSet } from '../src/lib/redis.js'
-
-function sanitize(text) {
-  if (!text) return ''
-  return text
-    .replace(/[\uD800-\uDFFF]/g, '')
-    .replace(/\u0000/g, '')
-}
-
-function genId() {
-  return Math.random().toString(36).slice(2, 10)
-}
+import { redisGet, redisSet } from './lib/redis.js'
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -24,558 +9,704 @@ async function parseBody(req) {
   })
 }
 
-async function callClaude(systemPrompt, userPrompt, maxTokens = 4000) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+function sanitize(text) {
+  if (!text) return ''
+  return text
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ')
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    .trim()
+}
+
+function extractJsonArray(text) {
+  try { const p = JSON.parse(text.trim()); return Array.isArray(p) ? p : null } catch {}
+  const stripped = text.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim()
+  try { const p = JSON.parse(stripped); return Array.isArray(p) ? p : null } catch {}
+  const start = text.indexOf('['), end = text.lastIndexOf(']')
+  if (start !== -1 && end > start) {
+    try { const p = JSON.parse(text.slice(start, end+1)); return Array.isArray(p) ? p : null } catch {}
+  }
+  // Auto-close truncated array
+  if (start !== -1) {
+    let partial = text.slice(start).trimEnd().replace(/,\s*$/, '')
+    let open = 0, openBr = 0, inStr = false, esc = false
+    for (const ch of partial) {
+      if (esc) { esc=false; continue }
+      if (ch==='\\' && inStr) { esc=true; continue }
+      if (ch==='"') { inStr=!inStr; continue }
+      if (inStr) continue
+      if (ch==='{') open++; if (ch==='}') open--
+      if (ch==='[') openBr++; if (ch===']') openBr--
+    }
+    while (open>0) { partial+='}'; open-- }
+    while (openBr>0) { partial+=']'; openBr-- }
+    try { const p = JSON.parse(partial); return Array.isArray(p) ? p : null } catch {}
+  }
+  return null
+}
+
+async function callClaude(systemHint, userPrompt, maxTokens=2000) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
+      'Content-Type': 'application/json',
       'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json'
+      'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: maxTokens,
-      system: systemPrompt,
+      system: systemHint,
       messages: [{ role: 'user', content: userPrompt }]
     })
   })
-  if (!response.ok) {
-    const err = await response.text()
-    throw new Error(`Claude API error: ${response.status} ${err}`)
-  }
-  const data = await response.json()
+  if (!res.ok) throw new Error(`Claude ${res.status}: ${(await res.text()).slice(0,100)}`)
+  const data = await res.json()
+  console.log(`Claude: ${data.content?.[0]?.text?.length||0} chars | stop:${data.stop_reason}`)
   return data.content?.[0]?.text || ''
 }
 
-function extractJson(text) {
-  try { return JSON.parse(text) } catch {}
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (fenced) { try { return JSON.parse(fenced[1].trim()) } catch {} }
-  const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start !== -1 && end !== -1) {
-    try { return JSON.parse(text.slice(start, end + 1)) } catch {}
+function buildDifficultyNote(profile, mode) {
+  if (!profile) return 'Standard difficulty — realistic Year 12 exam standard.'
+  const base = `Cognitive level: ${profile.cognitiveLevel||'apply'}. Steps per problem: ${profile.stepsPerCalculation||'2-3'}.`
+  if (mode==='match')     return `Match difficulty exactly: ${profile.description||'standard'}. ${base}`
+  if (mode==='harder')    return `~20% harder than: ${profile.description}. Add one extra step, combine 2 concepts. ${base}`
+  if (mode==='exam-plus') return `Maximum difficulty. Multi-concept synthesis, 3+ steps, unfamiliar contexts. ${base}`
+  return base
+}
+
+// ─── SVG Diagram Builders ────────────────────────────────────────────────────
+
+function buildParallelPlatesSVG(p={}) {
+  const sep    = p.separation || '4.0 cm'
+  const volts  = p.voltage    || '400 V'
+  const charge = p.particleCharge || 'negative'
+  const topPos = p.topPlatePolarity || 'positive'
+  const W=380, H=280, py1=60, py2=210, px1=80, px2=300
+  const pColor = charge==='positive' ? '#dc2626' : '#2563eb'
+  const pSym   = charge==='positive' ? '+' : '−'
+  const topLbl = topPos==='positive' ? '+ + + + + + +' : '− − − − − − −'
+  const botLbl = topPos==='positive' ? '− − − − − − −' : '+ + + + + + +'
+  let arrows = ''
+  for(let i=0;i<5;i++){
+    const ax=px1+20+i*44, ay1=py1+22, ay2=py2-22
+    arrows+=`<line x1="${ax}" y1="${ay1}" x2="${ax}" y2="${ay2}" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ea)"/>`
   }
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;border-radius:8px;border:1px solid #e5e7eb">
+<defs><marker id="ea" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M2 1L8 5L2 9" fill="none" stroke="#6b7280" stroke-width="1.5"/></marker></defs>
+<rect width="${W}" height="${H}" fill="white"/>
+<rect x="${px1}" y="${py1-12}" width="${px2-px1}" height="12" fill="#374151" rx="2"/>
+<text x="${(px1+px2)/2}" y="${py1-20}" font-size="12" fill="#374151" text-anchor="middle" font-weight="600">${topLbl}</text>
+<rect x="${px1}" y="${py2}" width="${px2-px1}" height="12" fill="#374151" rx="2"/>
+<text x="${(px1+px2)/2}" y="${py2+28}" font-size="12" fill="#374151" text-anchor="middle" font-weight="600">${botLbl}</text>
+${arrows}
+<text x="${px2+18}" y="${(py1+py2)/2+4}" font-size="14" fill="#374151" font-style="italic">E</text>
+<circle cx="${(px1+px2)/2}" cy="${(py1+py2)/2}" r="13" fill="${pColor}" opacity="0.15" stroke="${pColor}" stroke-width="2"/>
+<text x="${(px1+px2)/2}" y="${(py1+py2)/2+5}" font-size="15" fill="${pColor}" text-anchor="middle" font-weight="700">${pSym}</text>
+<line x1="${px1-8}" y1="${py1}" x2="${px1-8}" y2="${py2}" stroke="#9ca3af" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="${px1-14}" y="${(py1+py2)/2+4}" font-size="11" fill="#6b7280" text-anchor="end">${sep}</text>
+<text x="${W/2}" y="${H-6}" font-size="10" fill="#9ca3af" text-anchor="middle">${volts} between plates · separation ${sep}</text>
+</svg>`
+}
+
+function buildMagneticFieldSVG(p={}) {
+  const rows=p.rows||5, cols=p.cols||7
+  const fieldDir=p.fieldDirection||'into-page'
+  const pCharge=p.particleCharge||'positive'
+  const pVel=p.particleVelocity||'right'
+  const cell=44, ox=40, oy=40
+  const W=cols*cell+ox*2, H=rows*cell+oy*2+30
+  let syms=''
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    const cx=ox+c*cell+cell/2, cy=oy+r*cell+cell/2
+    if(fieldDir==='into-page'){
+      syms+=`<line x1="${cx-8}" y1="${cy-8}" x2="${cx+8}" y2="${cy+8}" stroke="#374151" stroke-width="1.5"/>
+<line x1="${cx+8}" y1="${cy-8}" x2="${cx-8}" y2="${cy+8}" stroke="#374151" stroke-width="1.5"/>`
+    } else {
+      syms+=`<circle cx="${cx}" cy="${cy}" r="3" fill="#374151"/>
+<circle cx="${cx}" cy="${cy}" r="9" fill="none" stroke="#374151" stroke-width="1"/>`
+    }
+  }
+  const px=ox+cell, py=oy+Math.floor(rows/2)*cell+cell/2
+  const pColor=pCharge==='positive'?'#dc2626':'#2563eb'
+  const pSym=pCharge==='positive'?'+':'−'
+  let vx1=px+16,vy1=py,vx2=px+55,vy2=py
+  if(pVel==='left'){vx1=px-16;vx2=px-55}
+  if(pVel==='up'){vx1=px;vy1=py-16;vx2=px;vy2=py-55}
+  if(pVel==='down'){vx1=px;vy1=py+16;vx2=px;vy2=py+55}
+  const fieldLbl=fieldDir==='into-page'?'B (into page ×)':'B (out of page •)'
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;border-radius:8px;border:1px solid #e5e7eb">
+<defs><marker id="va" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#d97706" stroke-width="1.8"/></marker></defs>
+<rect width="${W}" height="${H}" fill="white"/>
+${syms}
+<circle cx="${px}" cy="${py}" r="13" fill="${pColor}" opacity="0.15" stroke="${pColor}" stroke-width="2"/>
+<text x="${px}" y="${py+5}" font-size="15" fill="${pColor}" text-anchor="middle" font-weight="700">${pSym}</text>
+<line x1="${vx1}" y1="${vy1}" x2="${vx2}" y2="${vy2}" stroke="#d97706" stroke-width="2.5" marker-end="url(#va)"/>
+<text x="${(vx1+vx2)/2}" y="${Math.min(vy1,vy2)-8}" font-size="12" fill="#d97706" text-anchor="middle" font-style="italic">v</text>
+<text x="${W/2}" y="${H-8}" font-size="11" fill="#6b7280" text-anchor="middle">${fieldLbl} · ${pCharge} charge</text>
+</svg>`
+}
+
+function buildGravFieldGraphSVG(p={}) {
+  const bodyName=p.bodyName||'Earth', surfaceG=parseFloat(p.surfaceG)||9.8
+  const W=400, H=280, ox=65, oy=240, gw=290, gh=190
+  let pathD=''
+  for(let i=0;i<=80;i++){
+    const r=1+i*2/80
+    const g=surfaceG/(r*r)
+    const x=ox+(r-1)*gw/2, y=oy-(g/surfaceG)*gh
+    pathD+=(i===0?'M':'L')+`${x.toFixed(1)},${y.toFixed(1)}`
+  }
+  let xLbls='', yLbls=''
+  for(let i=0;i<=4;i++){
+    const x=ox+i*gw/4, rv=(1+i*0.5).toFixed(1)
+    xLbls+=`<text x="${x}" y="${oy+18}" font-size="10" fill="#6b7280" text-anchor="middle">${rv}R</text>
+<line x1="${x}" y1="${oy}" x2="${x}" y2="${oy+4}" stroke="#d1d5db" stroke-width="1"/>`
+  }
+  for(let i=0;i<=4;i++){
+    const y=oy-i*gh/4, gv=(surfaceG*i/4).toFixed(1)
+    yLbls+=`<text x="${ox-8}" y="${y+4}" font-size="10" fill="#6b7280" text-anchor="end">${gv}</text>
+<line x1="${ox-4}" y1="${y}" x2="${ox}" y2="${y}" stroke="#d1d5db" stroke-width="1"/>`
+  }
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;border-radius:8px;border:1px solid #e5e7eb">
+<rect width="${W}" height="${H}" fill="white"/>
+${[1,2,3,4].map(i=>`<line x1="${ox}" y1="${oy-i*gh/4}" x2="${ox+gw}" y2="${oy-i*gh/4}" stroke="#f3f4f6" stroke-width="1"/>`).join('')}
+<line x1="${ox}" y1="${oy-gh-10}" x2="${ox}" y2="${oy+4}" stroke="#374151" stroke-width="1.5"/>
+<line x1="${ox-4}" y1="${oy}" x2="${ox+gw+10}" y2="${oy}" stroke="#374151" stroke-width="1.5"/>
+<polygon points="${ox+gw+10},${oy} ${ox+gw+2},${oy-4} ${ox+gw+2},${oy+4}" fill="#374151"/>
+<polygon points="${ox},${oy-gh-10} ${ox-4},${oy-gh-2} ${ox+4},${oy-gh-2}" fill="#374151"/>
+<line x1="${ox}" y1="${oy-gh}" x2="${ox+gw}" y2="${oy-gh}" stroke="#fca5a5" stroke-width="1" stroke-dasharray="4,3"/>
+<path d="${pathD}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+<circle cx="${ox}" cy="${oy-gh}" r="4" fill="#dc2626"/>
+<text x="${ox+6}" y="${oy-gh-6}" font-size="10" fill="#dc2626">g = ${surfaceG} N/kg at surface</text>
+${xLbls}${yLbls}
+<text x="${ox+gw/2}" y="${H-4}" font-size="11" fill="#374151" text-anchor="middle">Distance from centre of ${bodyName}</text>
+<text x="14" y="${oy-gh/2}" font-size="11" fill="#374151" text-anchor="middle" transform="rotate(-90,14,${oy-gh/2})">g (N/kg)</text>
+</svg>`
+}
+
+function buildTwoChargesSVG(p={}) {
+  const q1=p.q1||'+3.0 μC', q2=p.q2||'−2.0 μC'
+  const q1pos=p.q1pos||'x = 0', q2pos=p.q2pos||'x = 0.50 m'
+  const pointP=p.pointP||'x = 0.20 m'
+  const W=480, H=200, y=100
+  const x1=80, x2=380, xP=180
+  const c1=q1.includes('-')||q1.includes('−')?'#2563eb':'#dc2626'
+  const c2=q2.includes('-')||q2.includes('−')?'#2563eb':'#dc2626'
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;border-radius:8px;border:1px solid #e5e7eb">
+<rect width="${W}" height="${H}" fill="white"/>
+<line x1="40" y1="${y}" x2="${W-30}" y2="${y}" stroke="#374151" stroke-width="1.5"/>
+<polygon points="${W-30},${y} ${W-38},${y-4} ${W-38},${y+4}" fill="#374151"/>
+<text x="${W-20}" y="${y+4}" font-size="12" fill="#374151" font-style="italic">x</text>
+<circle cx="${x1}" cy="${y}" r="18" fill="${c1}" opacity="0.15" stroke="${c1}" stroke-width="2"/>
+<text x="${x1}" y="${y+5}" font-size="13" fill="${c1}" text-anchor="middle" font-weight="700">${q1}</text>
+<text x="${x1}" y="${y+36}" font-size="10" fill="#6b7280" text-anchor="middle">${q1pos}</text>
+<circle cx="${x2}" cy="${y}" r="18" fill="${c2}" opacity="0.15" stroke="${c2}" stroke-width="2"/>
+<text x="${x2}" y="${y+5}" font-size="13" fill="${c2}" text-anchor="middle" font-weight="700">${q2}</text>
+<text x="${x2}" y="${y+36}" font-size="10" fill="#6b7280" text-anchor="middle">${q2pos}</text>
+<line x1="${xP}" y1="${y-24}" x2="${xP}" y2="${y+24}" stroke="#059669" stroke-width="2" stroke-dasharray="4,3"/>
+<circle cx="${xP}" cy="${y}" r="5" fill="#059669"/>
+<text x="${xP}" y="${y-30}" font-size="11" fill="#059669" text-anchor="middle" font-weight="600">P</text>
+<text x="${xP}" y="${y+40}" font-size="10" fill="#059669" text-anchor="middle">${pointP}</text>
+<line x1="${x1}" y1="${y+56}" x2="${x2}" y2="${y+56}" stroke="#9ca3af" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="${(x1+x2)/2}" y="${y+70}" font-size="10" fill="#9ca3af" text-anchor="middle">separation d</text>
+<text x="${W/2}" y="${H-6}" font-size="10" fill="#9ca3af" text-anchor="middle">Not to scale</text>
+</svg>`
+}
+
+function buildFreeBodySVG(p={}) {
+  const forces=p.forces||['weight down','normal up']
+  const W=300, H=260, cx=150, cy=130
+  const fMap = {
+    'weight down':    {dx:0,dy:65,color:'#7c3aed',label:'W = mg'},
+    'normal up':      {dx:0,dy:-65,color:'#dc2626',label:'N'},
+    'friction left':  {dx:-65,dy:0,color:'#d97706',label:'f'},
+    'friction right': {dx:65,dy:0,color:'#d97706',label:'F_applied'},
+    'applied right':  {dx:70,dy:0,color:'#059669',label:'F'},
+    'applied left':   {dx:-70,dy:0,color:'#059669',label:'F'},
+    'tension up':     {dx:0,dy:-65,color:'#2563eb',label:'T'},
+    'electric up':    {dx:0,dy:-65,color:'#dc2626',label:'qE'},
+    'electric down':  {dx:0,dy:65,color:'#dc2626',label:'qE'},
+  }
+  let arrows=''
+  const used=new Set()
+  for(const f of forces){
+    const key=f.toLowerCase()
+    const fd=fMap[key]||{dx:50,dy:0,color:'#374151',label:f}
+    const id='arr'+key.replace(/\s/g,'')
+    if(!used.has(id)){
+      used.add(id)
+      arrows+=`<defs><marker id="${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="${fd.color}" stroke-width="1.8"/></marker></defs>`
+    }
+    const x2=cx+fd.dx, y2=cy+fd.dy
+    arrows+=`<line x1="${cx}" y1="${cy}" x2="${x2}" y2="${y2}" stroke="${fd.color}" stroke-width="2.5" marker-end="url(#${id})"/>
+<text x="${cx+fd.dx*1.25}" y="${cy+fd.dy*1.25+4}" font-size="12" fill="${fd.color}" text-anchor="middle" font-style="italic">${fd.label}</text>`
+  }
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;border-radius:8px;border:1px solid #e5e7eb">
+<rect width="${W}" height="${H}" fill="white"/>
+${arrows}
+<rect x="${cx-22}" y="${cy-22}" width="44" height="44" fill="#bfdbfe" stroke="#1d4ed8" stroke-width="2" rx="5"/>
+<text x="${cx}" y="${cy+5}" font-size="13" fill="#1e40af" text-anchor="middle" font-weight="700">m</text>
+<text x="${W/2}" y="${H-6}" font-size="10" fill="#9ca3af" text-anchor="middle">Free body diagram</text>
+</svg>`
+}
+
+function buildCircuitSVG(p={}) {
+  const V=p.voltage||'12', r1=p.r1||'R₁', r2=p.r2||'R₂', r3=p.r3||'R₃'
+  const u=v=>isNaN(v)?v:v+'Ω'
+  return `<svg width="420" height="240" viewBox="0 0 420 240" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;border-radius:8px;border:1px solid #e5e7eb">
+<rect width="420" height="240" fill="white"/>
+<line x1="40" y1="50" x2="380" y2="50" stroke="#222" stroke-width="2"/>
+<line x1="380" y1="50" x2="380" y2="200" stroke="#222" stroke-width="2"/>
+<line x1="40" y1="200" x2="380" y2="200" stroke="#222" stroke-width="2"/>
+<line x1="40" y1="120" x2="40" y2="200" stroke="#222" stroke-width="2"/>
+<line x1="40" y1="50" x2="40" y2="88" stroke="#222" stroke-width="2"/>
+<line x1="28" y1="88" x2="52" y2="88" stroke="#222" stroke-width="3.5"/>
+<line x1="32" y1="100" x2="48" y2="100" stroke="#222" stroke-width="1.5"/>
+<line x1="28" y1="110" x2="52" y2="110" stroke="#222" stroke-width="3.5"/>
+<line x1="32" y1="120" x2="48" y2="120" stroke="#222" stroke-width="1.5"/>
+<line x1="40" y1="120" x2="40" y2="130" stroke="#222" stroke-width="2"/>
+<text x="8" y="106" font-size="11" fill="#1a56db" font-weight="700">${V}V</text>
+<rect x="140" y="40" width="60" height="20" fill="white" stroke="#374151" stroke-width="2" rx="3"/>
+<text x="170" y="54" font-size="11" fill="#374151" text-anchor="middle">${u(r1)}</text>
+<circle cx="240" cy="50" r="3" fill="#374151"/>
+<line x1="240" y1="50" x2="240" y2="78" stroke="#374151" stroke-width="2"/>
+<rect x="220" y="78" width="40" height="18" fill="white" stroke="#374151" stroke-width="2" rx="3"/>
+<text x="240" y="91" font-size="11" fill="#374151" text-anchor="middle">${u(r2)}</text>
+<line x1="240" y1="96" x2="240" y2="125" stroke="#374151" stroke-width="2"/>
+<line x1="240" y1="50" x2="305" y2="50" stroke="#374151" stroke-width="2"/>
+<line x1="305" y1="50" x2="305" y2="78" stroke="#374151" stroke-width="2"/>
+<rect x="285" y="78" width="40" height="18" fill="white" stroke="#374151" stroke-width="2" rx="3"/>
+<text x="305" y="91" font-size="11" fill="#374151" text-anchor="middle">${u(r3)}</text>
+<line x1="305" y1="96" x2="305" y2="125" stroke="#374151" stroke-width="2"/>
+<line x1="240" y1="125" x2="305" y2="125" stroke="#374151" stroke-width="2"/>
+<line x1="240" y1="125" x2="240" y2="200" stroke="#374151" stroke-width="2"/>
+<text x="210" y="228" font-size="10" fill="#9ca3af" text-anchor="middle">Circuit diagram (not to scale)</text>
+</svg>`
+}
+
+function buildWaveSVG(p={}) {
+  const wl=p.wavelength||'λ', amp=p.amplitude||'A'
+  return `<svg width="380" height="210" viewBox="0 0 380 210" xmlns="http://www.w3.org/2000/svg" style="font-family:sans-serif;background:white;border-radius:8px;border:1px solid #e5e7eb">
+<rect width="380" height="210" fill="white"/>
+<line x1="30" y1="105" x2="360" y2="105" stroke="#d1d5db" stroke-width="1" stroke-dasharray="5,4"/>
+<line x1="28" y1="25" x2="28" y2="185" stroke="#374151" stroke-width="1.5"/>
+<path d="M30,105 C55,105 65,38 100,38 S145,172 180,172 S225,38 260,38 S305,172 330,105" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+<defs>
+<marker id="lw" viewBox="0 0 10 10" refX="2" refY="5" orient="auto"><path d="M8,0 L0,5 L8,10" fill="none" stroke="#374151" stroke-width="1.5"/></marker>
+<marker id="rw" viewBox="0 0 10 10" refX="8" refY="5" orient="auto"><path d="M0,0 L8,5 L0,10" fill="none" stroke="#374151" stroke-width="1.5"/></marker>
+<marker id="ua" viewBox="0 0 10 10" refX="8" refY="5" orient="auto"><path d="M0,0 L8,5 L0,10" fill="none" stroke="#dc2626" stroke-width="1.5"/></marker>
+<marker id="da" viewBox="0 0 10 10" refX="8" refY="5" orient="auto"><path d="M0,0 L8,5 L0,10" fill="none" stroke="#dc2626" stroke-width="1.5"/></marker>
+</defs>
+<line x1="100" y1="190" x2="260" y2="190" stroke="#374151" stroke-width="1.5" marker-start="url(#lw)" marker-end="url(#rw)"/>
+<text x="180" y="204" font-size="11" fill="#374151" text-anchor="middle" font-style="italic">${wl}</text>
+<line x1="348" y1="38" x2="348" y2="105" stroke="#dc2626" stroke-width="1.5" marker-end="url(#ua)"/>
+<text x="360" y="74" font-size="11" fill="#dc2626" font-style="italic">${amp}</text>
+<text x="14" y="109" font-size="11" fill="#374151">0</text>
+</svg>`
+}
+
+function renderDiagramSVG(diag) {
+  if (!diag || !diag.type) return null
+  const t = diag.type, p = diag.params || {}
+  const desc = (diag.description||'').toLowerCase()
+  if (t==='parallel-plates'  || desc.includes('plate'))        return buildParallelPlatesSVG(p)
+  if (t==='magnetic-field'   || desc.includes('magnetic'))      return buildMagneticFieldSVG(p)
+  if (t==='gravitational-field' || desc.includes('gravitational field vs')) return buildGravFieldGraphSVG(p)
+  if (t==='two-charges'      || desc.includes('point charge'))  return buildTwoChargesSVG(p)
+  if (t==='free-body'        || desc.includes('free body'))     return buildFreeBodySVG(p)
+  if (t==='circuit'          || desc.includes('circuit'))       return buildCircuitSVG(p)
+  if (t==='wave'             || desc.includes('wave'))          return buildWaveSVG(p)
   return null
 }
 
-async function updateProgress(paperId, userId, subjectId, progress, statusMsg) {
-  const papersKey = `sm:papers:${userId}`
-  const papers = await redisGet(papersKey) || []
-  const idx = papers.findIndex(p => p.id === paperId)
-  if (idx !== -1) {
-    papers[idx].progress = progress
-    papers[idx].statusMsg = statusMsg
-    if (progress === 100) papers[idx].status = 'complete'
-    await redisSet(papersKey, papers)
-  }
-}
-
-// ── Diagram builders ──────────────────────────────────────────────────────────
-
-function buildDiagram(type, params = {}) {
-  const diagrams = {
-    'free-body': buildFreeBodyDiagram,
-    'circuit': buildCircuitDiagram,
-    'wave': buildWaveDiagram,
-    'graph': buildGraphDiagram,
-    'force-vector': buildForceVectorDiagram,
-    'parallel-plates': buildParallelPlatesDiagram,
-    'default': buildGenericDiagram
-  }
-  const builder = diagrams[type] || diagrams['default']
-  return builder(params)
-}
-
-function buildFreeBodyDiagram({ label = 'Object', forces = [] } = {}) {
-  const arrows = forces.length > 0 ? forces : [
-    { dir: 'up', label: 'N (Normal)', len: 60 },
-    { dir: 'down', label: 'W (Weight)', len: 60 },
-    { dir: 'right', label: 'F (Applied)', len: 50 }
-  ]
-  let arrowSvg = ''
-  const dirs = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0] }
-  for (const a of arrows) {
-    const [dx, dy] = dirs[a.dir] || [0,-1]
-    const x2 = 100 + dx * (a.len || 50)
-    const y2 = 100 + dy * (a.len || 50)
-    const lx = 100 + dx * ((a.len || 50) + 14)
-    const ly = 100 + dy * ((a.len || 50) + 14)
-    arrowSvg += `<line x1="100" y1="100" x2="${x2}" y2="${y2}" stroke="#0d9488" stroke-width="2" marker-end="url(#ah)"/>`
-    arrowSvg += `<text x="${lx}" y="${ly}" fill="#e2e8f0" font-size="10" text-anchor="middle" dominant-baseline="middle">${a.label}</text>`
-  }
-  return `<svg viewBox="0 0 200 200" width="200" height="200" style="background:#1e2535;border-radius:8px;" xmlns="http://www.w3.org/2000/svg">
-  <defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0d9488"/></marker></defs>
-  <rect x="80" y="80" width="40" height="40" fill="#334155" stroke="#0d9488" stroke-width="1.5" rx="4"/>
-  <text x="100" y="104" fill="#e2e8f0" font-size="9" text-anchor="middle">${label}</text>
-  ${arrowSvg}
-  </svg>`
-}
-
-function buildCircuitDiagram({ components = [] } = {}) {
-  return `<svg viewBox="0 0 240 180" width="240" height="180" style="background:#1e2535;border-radius:8px;" xmlns="http://www.w3.org/2000/svg">
-  <rect x="30" y="30" width="180" height="120" fill="none" stroke="#0d9488" stroke-width="2" rx="4"/>
-  <!-- Battery -->
-  <line x1="30" y1="90" x2="30" y2="70" stroke="#0d9488" stroke-width="2"/>
-  <line x1="20" y1="70" x2="40" y2="70" stroke="#0d9488" stroke-width="2"/>
-  <line x1="24" y1="62" x2="36" y2="62" stroke="#0d9488" stroke-width="1"/>
-  <line x1="30" y1="62" x2="30" y2="30" stroke="#0d9488" stroke-width="2"/>
-  <text x="10" y="68" fill="#94a3b8" font-size="9">+</text>
-  <text x="10" y="64" fill="#94a3b8" font-size="9">−</text>
-  <!-- Resistor zigzag -->
-  <polyline points="120,30 125,20 130,30 135,20 140,30 145,20 150,30" fill="none" stroke="#0d9488" stroke-width="2"/>
-  <text x="135" y="14" fill="#e2e8f0" font-size="9" text-anchor="middle">R</text>
-  <!-- Bulb/load symbol -->
-  <circle cx="210" cy="90" r="12" fill="none" stroke="#0d9488" stroke-width="2"/>
-  <line x1="204" y1="84" x2="216" y2="96" stroke="#0d9488" stroke-width="1.5"/>
-  <line x1="216" y1="84" x2="204" y2="96" stroke="#0d9488" stroke-width="1.5"/>
-  <text x="228" y="93" fill="#e2e8f0" font-size="9">L</text>
-  <text x="115" y="165" fill="#94a3b8" font-size="10" text-anchor="middle">Series Circuit</text>
-  </svg>`
-}
-
-function buildWaveDiagram({ label = 'Displacement–Position' } = {}) {
-  const points = []
-  for (let x = 0; x <= 240; x += 3) {
-    const y = 80 - Math.sin(x * 0.052) * 40
-    points.push(`${x + 20},${y}`)
-  }
-  return `<svg viewBox="0 0 280 160" width="280" height="160" style="background:#1e2535;border-radius:8px;" xmlns="http://www.w3.org/2000/svg">
-  <line x1="20" y1="80" x2="265" y2="80" stroke="#475569" stroke-width="1" stroke-dasharray="4"/>
-  <line x1="20" y1="10" x2="20" y2="150" stroke="#475569" stroke-width="1.5"/>
-  <line x1="20" y1="150" x2="265" y2="150" stroke="#475569" stroke-width="1.5"/>
-  <polyline points="${points.join(' ')}" fill="none" stroke="#0d9488" stroke-width="2"/>
-  <text x="140" y="158" fill="#94a3b8" font-size="9" text-anchor="middle">Position (m)</text>
-  <text x="6" y="50" fill="#94a3b8" font-size="9" text-anchor="middle" transform="rotate(-90,6,80)">Displacement</text>
-  <text x="140" y="20" fill="#e2e8f0" font-size="10" text-anchor="middle">${label}</text>
-  <text x="140" y="35" fill="#64748b" font-size="8" text-anchor="middle">λ ←────────→</text>
-  </svg>`
-}
-
-function buildGraphDiagram({ xLabel = 'Time (s)', yLabel = 'Velocity (m/s)', title = 'v–t graph' } = {}) {
-  return `<svg viewBox="0 0 240 180" width="240" height="180" style="background:#1e2535;border-radius:8px;" xmlns="http://www.w3.org/2000/svg">
-  <line x1="40" y1="20" x2="40" y2="150" stroke="#475569" stroke-width="1.5"/>
-  <line x1="40" y1="150" x2="220" y2="150" stroke="#475569" stroke-width="1.5"/>
-  <line x1="40" y1="150" x2="40" y2="50" stroke="#0d9488" stroke-width="2"/>
-  <line x1="40" y1="50" x2="130" y2="50" stroke="#0d9488" stroke-width="2"/>
-  <line x1="130" y1="50" x2="220" y2="120" stroke="#0d9488" stroke-width="2" stroke-dasharray="5,3"/>
-  <text x="130" y="170" fill="#94a3b8" font-size="9" text-anchor="middle">${xLabel}</text>
-  <text x="10" y="90" fill="#94a3b8" font-size="9" text-anchor="middle" transform="rotate(-90,10,90)">${yLabel}</text>
-  <text x="130" y="14" fill="#e2e8f0" font-size="10" text-anchor="middle">${title}</text>
-  </svg>`
-}
-
-function buildForceVectorDiagram({ angle = 30 } = {}) {
-  const rad = angle * Math.PI / 180
-  const fx = Math.cos(rad) * 70
-  const fy = Math.sin(rad) * 70
-  return `<svg viewBox="0 0 200 180" width="200" height="180" style="background:#1e2535;border-radius:8px;" xmlns="http://www.w3.org/2000/svg">
-  <defs><marker id="va" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0d9488"/></marker></defs>
-  <line x1="30" y1="140" x2="185" y2="140" stroke="#475569" stroke-width="1"/>
-  <line x1="30" y1="20" x2="30" y2="140" stroke="#475569" stroke-width="1"/>
-  <line x1="30" y1="140" x2="${30+fx}" y2="${140-fy}" stroke="#0d9488" stroke-width="2.5" marker-end="url(#va)"/>
-  <line x1="30" y1="140" x2="${30+fx}" y2="140" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4"/>
-  <line x1="${30+fx}" y1="140" x2="${30+fx}" y2="${140-fy}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4"/>
-  <text x="${30+fx/2}" y="135" fill="#94a3b8" font-size="9" text-anchor="middle">Fx</text>
-  <text x="${30+fx+10}" y="${140-fy/2}" fill="#94a3b8" font-size="9">Fy</text>
-  <text x="${30+fx/2-8}" y="${140-fy/2+10}" fill="#0d9488" font-size="10">F</text>
-  <text x="${50}" y="132" fill="#e2e8f0" font-size="9">${angle}°</text>
-  </svg>`
-}
-
-function buildParallelPlatesDiagram({} = {}) {
-  return `<svg viewBox="0 0 220 160" width="220" height="160" style="background:#1e2535;border-radius:8px;" xmlns="http://www.w3.org/2000/svg">
-  <defs><marker id="ea" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f59e0b"/></marker></defs>
-  <rect x="20" y="20" width="180" height="12" fill="#334155" stroke="#0d9488" stroke-width="1.5" rx="2"/>
-  <rect x="20" y="128" width="180" height="12" fill="#334155" stroke="#0d9488" stroke-width="1.5" rx="2"/>
-  <text x="10" y="30" fill="#0d9488" font-size="11">+</text>
-  <text x="10" y="140" fill="#ef4444" font-size="11">−</text>
-  ${[60,95,130,165].map(x => `<line x1="${x}" y1="32" x2="${x}" y2="128" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#ea)" stroke-dasharray="6,2"/>`).join('')}
-  <text x="110" y="155" fill="#94a3b8" font-size="9" text-anchor="middle">Uniform Electric Field E</text>
-  </svg>`
-}
-
-function buildGenericDiagram({ label = 'Diagram' } = {}) {
-  return `<svg viewBox="0 0 200 120" width="200" height="120" style="background:#1e2535;border-radius:8px;" xmlns="http://www.w3.org/2000/svg">
-  <rect x="10" y="10" width="180" height="100" fill="none" stroke="#334155" stroke-width="1" rx="6"/>
-  <text x="100" y="65" fill="#475569" font-size="11" text-anchor="middle">${label}</text>
-  </svg>`
-}
-
-function pickDiagram(topicText) {
-  const t = topicText.toLowerCase()
-  if (t.includes('force') && (t.includes('body') || t.includes('object'))) return buildDiagram('free-body')
-  if (t.includes('circuit') || t.includes('resistor') || t.includes('capacitor')) return buildDiagram('circuit')
-  if (t.includes('wave') || t.includes('oscillat') || t.includes('harmonic')) return buildDiagram('wave')
-  if (t.includes('vector') || t.includes('component') || t.includes('resolv')) return buildDiagram('force-vector')
-  if (t.includes('electric field') || t.includes('plate') || t.includes('charge')) return buildDiagram('parallel-plates')
-  if (t.includes('graph') || t.includes('velocity') || t.includes('acceleration') || t.includes('displacement')) return buildDiagram('graph')
-  return null
-}
-
-// ── Section generators ────────────────────────────────────────────────────────
-
-async function generateMCQSection(section, topics, context, subjectName, scope) {
-  const topicList = topics.map(t => typeof t === 'string' ? t : t.name).join(', ')
-  const questionCount = section.questionCount || 20
-  const marksEach = section.marksPerQuestion || 1
-
-  const prompt = `You are writing a ${subjectName} exam for ${scope.examBoard || 'a state curriculum'}.
-
-PAST PAPER FORMAT:
-- This is ${section.name}: ${section.type}
-- EXACTLY ${questionCount} questions, ${marksEach} mark each
-- Instructions: ${section.instructions || `Answer ALL ${questionCount} questions.`}
-
-TOPICS TO COVER (must cover all of these across the questions):
-${topicList}
-
-STUDENT CONTEXT:
-${context.slice(0, 4000)}
-
-Generate EXACTLY ${questionCount} multiple choice questions. Distribute them EVENLY across all topics listed above — do not cluster questions on just one or two topics.
-
-Return ONLY valid JSON in this exact structure:
-{
-  "sectionName": "${section.name}",
-  "sectionType": "Multiple Choice",
-  "instructions": "${section.instructions || `Answer ALL ${questionCount} questions. Each question is worth ${marksEach} mark.`}",
-  "questions": [
-    {
-      "number": 1,
-      "topic": "topic name",
-      "stem": "Question text here",
-      "options": {
-        "A": "Option A text",
-        "B": "Option B text",
-        "C": "Option C text",
-        "D": "Option D text"
-      },
-      "answer": "A",
-      "marks": ${marksEach},
-      "explanation": "Brief explanation of why A is correct"
-    }
-  ]
-}`
-
-  const raw = await callClaude(
-    `You are an expert exam writer. Generate exactly ${questionCount} MCQ questions. Return ONLY valid JSON.`,
-    prompt,
-    4500
-  )
-  return extractJson(raw)
-}
-
-async function generateShortAnswerSection(section, topics, context, subjectName, scope) {
-  const topicList = topics.map(t => typeof t === 'string' ? t : t.name).join(', ')
-  const questionCount = section.questionCount || 5
-  const totalMarks = section.totalMarks || 50
-
-  const prompt = `You are writing a ${subjectName} exam for ${scope.examBoard || 'a state curriculum'}.
-
-PAST PAPER FORMAT:
-- This is ${section.name}: ${section.type}
-- EXACTLY ${questionCount} questions, totalling ${totalMarks} marks
-- Instructions: ${section.instructions || `Answer ALL ${questionCount} questions.`}
-
-TOPICS TO COVER:
-${topicList}
-
-STUDENT CONTEXT:
-${context.slice(0, 4000)}
-
-Generate EXACTLY ${questionCount} short answer questions. Each question should have 2-4 parts (a, b, c, d). Marks per question should add to approximately ${Math.round(totalMarks / questionCount)} marks each.
-
-Where appropriate, reference diagrams (the app will render them). For diagram-based questions, add "diagramType": "free-body" or "circuit" or "wave" or "graph" to the question.
-
-Return ONLY valid JSON:
-{
-  "sectionName": "${section.name}",
-  "sectionType": "Short Answer",
-  "instructions": "${section.instructions || `Answer ALL ${questionCount} questions.`}",
-  "questions": [
-    {
-      "number": 1,
-      "topic": "topic name",
-      "context": "An object of mass 5 kg is placed on a frictionless surface...",
-      "diagramType": "free-body",
-      "parts": [
-        {
-          "part": "a",
-          "question": "Calculate the net force acting on the object.",
-          "marks": 3,
-          "markingCriteria": ["Correct formula F = ma (1 mark)", "Correct substitution (1 mark)", "Correct answer with units (1 mark)"]
-        },
-        {
-          "part": "b",
-          "question": "Describe the motion of the object if a constant force is applied.",
-          "marks": 2,
-          "markingCriteria": ["Uniform acceleration (1 mark)", "Direction consistent with force (1 mark)"]
-        }
-      ],
-      "totalMarks": 5
-    }
-  ]
-}`
-
-  const raw = await callClaude(
-    `You are an expert exam writer. Generate exactly ${questionCount} short answer questions. Return ONLY valid JSON.`,
-    prompt,
-    5000
-  )
-  return extractJson(raw)
-}
-
-async function generateExtendedSection(section, topics, context, subjectName, scope) {
-  const topicList = topics.map(t => typeof t === 'string' ? t : t.name).join(', ')
-  const questionCount = section.questionCount || 2
-  const totalMarks = section.totalMarks || 30
-
-  const prompt = `You are writing a ${subjectName} exam for ${scope.examBoard || 'a state curriculum'}.
-
-PAST PAPER FORMAT:
-- This is ${section.name}: ${section.type}
-- ${questionCount} extended response question(s), ${totalMarks} marks total
-- Instructions: ${section.instructions || 'Answer all parts fully.'}
-
-TOPICS:
-${topicList}
-
-CONTEXT:
-${context.slice(0, 3000)}
-
-Generate ${questionCount} extended response question(s) with multiple parts. These should require synthesis, evaluation, and multi-step reasoning.
-
-Return ONLY valid JSON:
-{
-  "sectionName": "${section.name}",
-  "sectionType": "Extended Response",
-  "instructions": "${section.instructions || 'Answer all parts. Show all working.'}",
-  "questions": [
-    {
-      "number": 1,
-      "topic": "topic name",
-      "context": "Scenario or stimulus text...",
-      "parts": [
-        {
-          "part": "a",
-          "question": "Extended question part...",
-          "marks": 10,
-          "markingCriteria": ["criterion 1", "criterion 2"]
-        }
-      ],
-      "totalMarks": ${totalMarks}
-    }
-  ]
-}`
-
-  const raw = await callClaude(
-    `You are an expert exam writer. Generate extended response questions. Return ONLY valid JSON.`,
-    prompt,
-    4000
-  )
-  return extractJson(raw)
-}
-
-// ── Topic coverage validator ──────────────────────────────────────────────────
-
-function calculateTopicCoverage(paper, allTopics) {
-  const coveredTopics = new Set()
-  const paperText = JSON.stringify(paper).toLowerCase()
-
-  for (const topic of allTopics) {
-    const name = (typeof topic === 'string' ? topic : topic.name).toLowerCase()
-    const words = name.split(/\s+/).filter(w => w.length > 3)
-    if (words.some(w => paperText.includes(w))) {
-      coveredTopics.add(name)
-    }
-  }
-
-  return {
-    covered: coveredTopics.size,
-    total: allTopics.length,
-    percentage: allTopics.length > 0 ? Math.round((coveredTopics.size / allTopics.length) * 100) : 100,
-    uncoveredTopics: allTopics
-      .map(t => typeof t === 'string' ? t : t.name)
-      .filter(name => !coveredTopics.has(name.toLowerCase()))
-  }
-}
-
-// ── Main handler ──────────────────────────────────────────────────────────────
+// ─── Main handler ─────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
+  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return }
+  let body = {}
+  try { body = await parseBody(req) } catch {}
 
-  // QStash verification (optional — add if using Upstash QStash)
-  // const sig = req.headers['upstash-signature']
-  // if (!sig) return res.status(401).json({ error: 'Unauthorized' })
+  const { jobId, userId, subjectId, slotNumber, customInstructions='', confirmedScope=null, difficultyMode='match' } = body
+  if (!jobId || !userId || !subjectId) { res.status(400).json({ error: 'Missing required fields' }); return }
+
+  const paperKey = `sm:papers:${userId}:${subjectId}`
+
+  async function markFailed(msg) {
+    try {
+      const pp = await redisGet(paperKey)||[]
+      const ii = pp.findIndex(p=>p.id===jobId)
+      if(ii>=0){ pp[ii].status='failed'; pp[ii].error=msg; await redisSet(paperKey,pp) }
+    } catch {}
+  }
 
   try {
-    const body = await parseBody(req)
-    const { paperId, userId, subjectId } = body
+    const papers = await redisGet(paperKey)||[]
+    const ji = papers.findIndex(p=>p.id===jobId)
+    if(ji>=0){ papers[ji].status='generating'; await redisSet(paperKey,papers) }
 
-    if (!paperId || !userId || !subjectId) {
-      return res.status(400).json({ error: 'paperId, userId, subjectId required' })
-    }
+    const subjects = await redisGet(`sm:subjects:${userId}`)||[]
+    const subject  = subjects.find(s=>s.id===subjectId)
+    if(!subject) throw new Error('Subject not found')
 
-    // Get subject
-    const subjects = await redisGet(`sm:subjects:${userId}`) || []
-    const subject = subjects.find(s => s.id === subjectId)
-    if (!subject) return res.status(404).json({ error: 'Subject not found' })
+    const { name, examBoard='BSSS', yearLevel='12' } = subject
+    const scopeTopics  = confirmedScope?.topics?.length>0 ? confirmedScope.topics : (subject.topics||[])
+    const scopeTerm    = confirmedScope?.term||null
+    const scopeType    = confirmedScope?.examType||'exam'
+    const levelDesc    = confirmedScope?.levelDescription||`Year ${yearLevel} ${examBoard}`
+    const diffProfile  = confirmedScope?.difficultyProfile||null
+    const diffNote     = buildDifficultyNote(diffProfile, difficultyMode)
+    const topicsList   = scopeTopics.length>0 ? scopeTopics.join(', ') : `General ${name}`
+    const sys = `You are an expert ${examBoard} exam paper writer for ${name}. Generate realistic exam questions matching actual ${examBoard} past papers. ONLY generate questions on: ${topicsList}. Return ONLY valid JSON arrays.`
 
-    // Get confirmed scope
-    const scope = await redisGet(`sm:scope:${userId}:${subjectId}`)
-
-    // Get all docs
-    const docs = await redisGet(`sm:docs:${userId}:${subjectId}`) || []
-
-    // Build context from doc chunks
-    let context = ''
-    for (const doc of docs.slice(0, 5)) {
-      const chunks = (doc.chunks || []).slice(0, 10)
-      context += chunks.map(c => sanitize(c)).join('\n') + '\n\n'
-    }
-
-    // Get paper memory (topics used in previous papers)
-    const paperMemory = await redisGet(`sm:paper-memory:${userId}:${subjectId}`) || []
-
-    await updateProgress(paperId, userId, subjectId, 10, 'Analysing exam format...')
-
-    const subjectName = scope?.subjectName || subject.name || 'the subject'
-    const examBoard = scope?.examBoard || ''
-
-    // Determine sections to generate
-    let sections = scope?.sections || []
-    const topics = scope?.topics || []
-    const allTopics = topics.length > 0 ? topics : [{ name: subject.name || 'General Topics' }]
-
-    // Filter out topics already heavily covered in previous papers
-    const unusedTopics = allTopics.filter(t => {
-      const name = (typeof t === 'string' ? t : t.name).toLowerCase()
-      const timesUsed = paperMemory.filter(m => m.toLowerCase().includes(name)).length
-      return timesUsed < 2
-    })
-    const topicsToUse = unusedTopics.length >= 3 ? unusedTopics : allTopics
-
-    if (sections.length === 0) {
-      // Fallback: default to MCQ + Short Answer
-      sections = [
-        { name: 'Section A', type: 'Multiple Choice', questionCount: 20, marksPerQuestion: 1, totalMarks: 20 },
-        { name: 'Section B', type: 'Short Answer', questionCount: 5, marksPerQuestion: 10, totalMarks: 50 }
-      ]
-    }
-
-    const generatedSections = []
-    const progressStep = Math.floor(70 / sections.length)
-    let progressBase = 15
-
-    for (let i = 0; i < sections.length; i++) {
-      const section = sections[i]
-      await updateProgress(paperId, userId, subjectId, progressBase, `Generating ${section.name}...`)
-
-      let sectionData = null
-      const sType = (section.type || '').toLowerCase()
-
-      try {
-        if (sType.includes('multiple choice') || sType.includes('mcq')) {
-          sectionData = await generateMCQSection(section, topicsToUse, context, subjectName, scope || {})
-        } else if (sType.includes('extended') || sType.includes('essay')) {
-          sectionData = await generateExtendedSection(section, topicsToUse, context, subjectName, scope || {})
-        } else {
-          // Default: short answer
-          sectionData = await generateShortAnswerSection(section, topicsToUse, context, subjectName, scope || {})
-        }
-
-        if (!sectionData) {
-          sectionData = {
-            sectionName: section.name,
-            sectionType: section.type,
-            instructions: section.instructions || 'Answer all questions.',
-            questions: [],
-            error: 'Generation failed for this section'
-          }
-        }
-
-        // Add SVG diagrams for questions that reference them
-        if (sectionData.questions) {
-          for (const q of sectionData.questions) {
-            if (q.diagramType) {
-              q.diagramSvg = buildDiagram(q.diagramType, {})
-            } else {
-              // Auto-detect diagram from question text
-              const autoSvg = pickDiagram(JSON.stringify(q))
-              if (autoSvg) q.diagramSvg = autoSvg
-            }
-          }
-        }
-
-        generatedSections.push(sectionData)
-      } catch (sectionErr) {
-        console.error(`Section ${section.name} failed:`, sectionErr.message)
-        generatedSections.push({
-          sectionName: section.name,
-          sectionType: section.type,
-          instructions: section.instructions || '',
-          questions: [],
-          error: sectionErr.message
-        })
+    // Doc context — 800 chars max
+    const allDocs = await redisGet(`sm:docs:${userId}:${subjectId}`)||[]
+    let docContext=''
+    if(allDocs.length>0){
+      const chunks=allDocs.flatMap(d=>d.chunks||[])
+      let chars=0
+      for(const chunk of chunks){
+        const c=sanitize(chunk)
+        if(chars+c.length>800) break
+        docContext+=c+'\n'; chars+=c.length
       }
-
-      progressBase += progressStep
     }
 
-    // Calculate topic coverage
-    const coverage = calculateTopicCoverage({ sections: generatedSections }, allTopics)
+    // Paper memory — force gap topics into this paper
+    const existingPapers = await redisGet(paperKey)||[]
+    const coveredTopics = [...new Set(
+      existingPapers.filter(p=>p.status==='ready'&&p.id!==jobId).flatMap(p=>p.topicsCovered||[])
+    )]
+    const gapTopics = scopeTopics.filter(t=>
+      !coveredTopics.some(c=>c.toLowerCase().includes(t.toLowerCase().slice(0,8)))
+    )
+    const memoryNote = coveredTopics.length > 0
+      ? `\nPAPER MEMORY — Already covered: ${coveredTopics.join(', ')}.\nMUST prioritise these gap topics in this paper: ${gapTopics.length>0 ? gapTopics.join(', ') : 'fresh angles on all topics'}.`
+      : ''
 
-    // Update paper memory with covered topics
-    const newMemoryEntries = topics
-      .filter(t => {
-        const name = (typeof t === 'string' ? t : t.name).toLowerCase()
-        return JSON.stringify(generatedSections).toLowerCase().includes(name.split(' ')[0])
+    // Format flags from scope — respect what was detected from past papers
+    const hasMCQ       = confirmedScope?.hasMCQ !== false  // default true unless explicitly false
+    const sectionType  = confirmedScope?.sectionType || 'mcq-and-long-answer'
+    const longAnswerOnly = !hasMCQ || sectionType === 'long-answer-only'
+    const questionStructure = confirmedScope?.format?.questionStructure || ''
+
+    const ctx = `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${diffNote}${customInstructions?`\nFocus: ${customInstructions}`:''}${memoryNote}${docContext?`\nPast paper reference:\n${docContext.slice(0,600)}`:''}`
+
+    // ── CALL 1: MCQ (only if format has MCQ) ─────────────────────────────────
+    let mcqQs = []
+    if (!longAnswerOnly) {
+      const mcqText = await callClaude(sys,
+`${ctx}
+
+Generate exactly 10 multiple choice questions for a ${examBoard} ${name} exam.
+Rules:
+- Each worth 1 mark, 4 options (A/B/C/D)
+- Plausible distractors based on common student mistakes
+- Include ALL given values needed to solve calculation questions
+- ONLY from these topics: ${topicsList}
+- Mix: recall (3), application (4), analysis (3)
+
+Return ONLY a valid JSON array — no preamble, no markdown:
+[{"number":1,"question":"Full question text with ALL given values","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"B","topic":"Topic name","workingOut":"Solution"}]`, 3500)
+      mcqQs = extractJsonArray(mcqText) || []
+    } else {
+      console.log(`Paper ${slotNumber}: long-answer-only format — skipping MCQ call`)
+    }
+
+    // ── CALL 2: Short answer WITH diagrams (or long-answer format) ───────────
+    const saPromptFormat = longAnswerOnly
+      ? `Generate exactly 2 long answer questions matching the EXACT format of the past papers.
+CRITICAL FORMAT RULES:
+- Multi-part questions with sub-parts labelled (a)(b)(c)(d)(e)
+- Marks shown per sub-part e.g. [2 marks]  
+- Total marks per question: 9-14 marks
+- NO multiple choice options — pure written working required
+- Question introduces a scenario/distribution, sub-parts build progressively
+- Include ALL given values in the question stem or sub-part${questionStructure ? `\n- Style: ${questionStructure}` : ''}`
+      : `Generate exactly 2 short answer questions. At least ONE must include a diagram.
+CRITICAL RULES:
+- Every calculation sub-part MUST include ALL given values in the question text
+- Each question: 3-4 sub-parts (a,b,c,d), total 8-12 marks
+- Parts must build — part b uses result from part a
+- Diagram types: "parallel-plates","magnetic-field","gravitational-field","two-charges","free-body","circuit","wave"`
+
+    const saText = await callClaude(sys,
+`${ctx}
+
+${saPromptFormat}
+
+Return ONLY a valid JSON array:
+[{
+  "number":${mcqQs.length+1},
+  "question":"Full scenario with ALL given values",
+  "topic":"Topic name",
+  "marks":10,
+  "parts":[{
+    "part":"a",
+    "question":"Sub-question with any additional given values",
+    "marks":2,
+    "answer":"Full worked solution with units",
+    "markingCriteria":"Award 1 mark for [X]. Award 1 mark for [Y]."
+  }]
+}]`, 2800)
+
+    let saQs = extractJsonArray(saText) || []
+    saQs = saQs.map((q,i)=>({...q, number: mcqQs.length+i+1}))
+
+    // ── Render diagrams as SVG ───────────────────────────────────────────────
+    const allDiagrams = []
+    saQs = saQs.map(q => {
+      if (q.diagram) {
+        const svg = renderDiagramSVG(q.diagram)
+        if (svg) {
+          const diagId = allDiagrams.length + 1
+          allDiagrams.push({ id: diagId, ...q.diagram, svg })
+          return { ...q, diagramId: diagId, diagram: { ...q.diagram, svg } }
+        }
+      }
+      return q
+    })
+
+    // ── Assemble paper ───────────────────────────────────────────────────────
+    const mcqMarks = mcqQs.length
+    const saMarks  = saQs.reduce((s,q)=>s+(q.marks||10),0)
+    const total    = mcqMarks + saMarks
+
+    // Build sections based on detected format
+    const sections = []
+    if (!longAnswerOnly && mcqQs.length > 0) {
+      sections.push({
+        name: 'Section A: Multiple Choice', type: 'mcq', marks: mcqMarks,
+        instructions: 'Circle the letter of the best answer. Each question is worth 1 mark.',
+        questions: mcqQs.map(q=>({...q, type:'mcq', marks:1, parts:null,
+          markingCriteria:`Award 1 mark for ${q.answer}`}))
       })
-      .map(t => typeof t === 'string' ? t : t.name)
+    }
+    sections.push({
+      name: longAnswerOnly ? 'Questions' : 'Section B: Short Answer',
+      type: 'short', marks: saMarks,
+      instructions: longAnswerOnly
+        ? 'Answer ALL questions. Show all working clearly. Marks allocated are shown in brackets.'
+        : 'Answer ALL questions in the spaces provided. Show all working clearly.',
+      questions: saQs.map(q=>({...q, type:'short'}))
+    })
 
-    const updatedMemory = [...paperMemory, ...newMemoryEntries].slice(-100)
-    await redisSet(`sm:paper-memory:${userId}:${subjectId}`, updatedMemory)
-
-    await updateProgress(paperId, userId, subjectId, 90, 'Finalising paper...')
-
-    // Build final paper record
     const paper = {
-      title: `${subjectName} Mock Examination`,
-      subjectName,
-      examBoard: scope?.examBoard || '',
-      duration: scope?.duration || '',
-      totalMarks: scope?.totalMarks || sections.reduce((sum, s) => sum + (s.totalMarks || 0), 0),
-      instructions: `This paper is worth ${scope?.totalMarks || 'total'} marks. Time allowed: ${scope?.duration || 'see instructions'}.`,
-      sections: generatedSections,
-      coverage,
-      generatedAt: new Date().toISOString(),
-      scopeUsed: scope ? {
-        examType: scope.examType,
-        examBoard: scope.examBoard,
-        duration: scope.duration,
-        sectionCount: sections.length
-      } : null
+      coverPage: {
+        school: 'Narrabundah College', subject: name, level: levelDesc,
+        examType: scopeType, mockNumber: slotNumber,
+        ...(scopeTerm && { scope: scopeTerm }),
+        instructions: [
+          'Write in black or blue pen only',
+          'Show all working clearly for full marks',
+          'Scientific calculator permitted',
+          longAnswerOnly ? 'Round answers to 3 decimal places where appropriate' : 'Phones and all electronic devices must be away'
+        ]
+      },
+      title: `${name} — Mock Paper ${slotNumber}${scopeTerm?` (${scopeTerm})`:''}`,
+      subject: name, levelDescription: levelDesc, examBoard,
+      scopeTerm: scopeTerm||null, scopeExamType: scopeType, difficultyMode,
+      hasMCQ: !longAnswerOnly,
+      totalMarks: total,
+      timeAllowed: confirmedScope?.format?.timeMins ? `${confirmedScope.format.timeMins} minutes` : '60 minutes',
+      allowedMaterials: 'Scientific calculator, ruler',
+      diagrams: allDiagrams,
+      sections
     }
 
-    // Save complete paper
-    const papersKey = `sm:papers:${userId}`
-    const papers = await redisGet(papersKey) || []
-    const idx = papers.findIndex(p => p.id === paperId)
-    if (idx !== -1) {
-      papers[idx].status = 'complete'
-      papers[idx].progress = 100
-      papers[idx].paper = paper
-      papers[idx].coverage = coverage
-      papers[idx].completedAt = new Date().toISOString()
-      await redisSet(papersKey, papers)
+    // Update progress to 50%
+    const midPapers = await redisGet(paperKey)||[]
+    const mi = midPapers.findIndex(p=>p.id===jobId)
+    if(mi>=0){ midPapers[mi].status='generating'; midPapers[mi].progress=50; midPapers[mi].paper=paper; await redisSet(paperKey,midPapers) }
+
+    console.log(`Paper ${slotNumber} 50% — starting calls 3+4...`)
+
+    // ── CALL 3: Q3+Q4 (format-aware) ─────────────────────────────────────────
+    const existingQCount = (paper.sections||[]).flatMap(s=>s.questions||[]).length
+    const diffStr = difficultyMode==='harder'?'~20% harder than past papers':difficultyMode==='exam-plus'?'Maximum difficulty — multi-concept synthesis':'Match past paper difficulty exactly'
+
+    const call3Prompt = longAnswerOnly
+      ? `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${diffStr}${memoryNote}
+
+Generate exactly 2 more long answer questions (different topics from Q1-Q2 already generated).
+CRITICAL FORMAT — match the past paper style exactly:
+- Multi-part questions with sub-parts (a)(b)(c)(d)(e)
+- Marks shown per sub-part in square brackets [N marks]
+- Total marks per question: 9-14 marks
+- NO multiple choice — pure written working
+- ALL given values included in question stem or sub-part${questionStructure?`\n- Style: ${questionStructure}`:''}
+
+Return ONLY valid JSON array:
+[{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":12,"parts":[{"part":"a","question":"Sub-question","marks":2,"answer":"Full solution","markingCriteria":"Award marks for..."}]}]`
+      : `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${diffStr}${memoryNote}
+
+Generate exactly 2 more short answer questions (different topics from Q1-Q2).
+RULES:
+- ALL given values must be in the question text
+- Each question: 3-4 sub-parts, 8-12 marks total
+- Include a diagram if relevant to subject
+- Parts build — part b uses result from part a
+Diagram types: "parallel-plates","magnetic-field","gravitational-field","two-charges","free-body"
+
+Return ONLY valid JSON array:
+[{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":10,"diagram":{"type":"gravitational-field","description":"g vs distance graph","params":{"bodyName":"Earth","surfaceG":"9.8"}},"parts":[{"part":"a","question":"Sub-question","marks":3,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`
+
+    const call3Text = await callClaude(sys, call3Prompt, 2800)
+
+    let saQs2 = extractJsonArray(call3Text)||[]
+    saQs2 = saQs2.map((q,i)=>({...q, number:existingQCount+i+1}))
+    saQs2 = saQs2.map(q=>{
+      if(q.diagram){ const svg=renderDiagramSVG(q.diagram); if(svg) return{...q,diagram:{...q.diagram,svg}} }
+      return q
+    })
+
+    // Add to main questions section
+    const sectionB = paper.sections?.find(s=>s.type==='short')
+    if(sectionB){ sectionB.questions=[...(sectionB.questions||[]),...saQs2]; sectionB.marks=sectionB.questions.reduce((s,q)=>s+(q.marks||0),0) }
+
+    // Update progress to 75%
+    const p75 = await redisGet(paperKey)||[]
+    const p75i = p75.findIndex(p=>p.id===jobId)
+    if(p75i>=0){ p75[p75i].progress=75; p75[p75i].paper=paper; await redisSet(paperKey,p75) }
+
+    console.log(`Paper ${slotNumber} 75% — starting call 4...`)
+
+    // ── CALL 4: Extended/hardest question (format-aware) ─────────────────────
+    const totalQSoFar = existingQCount + saQs2.length
+
+    const call4Prompt = longAnswerOnly
+      ? `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${difficultyMode==='exam-plus'?'Maximum difficulty':'Match past paper difficulty'}
+
+Generate exactly 1 harder multi-part question — the most challenging question in the paper.
+Synthesis of 2-3 concepts, 12-16 marks, 5-6 sub-parts (a)(b)(c)(d)(e)(f).
+Final part must require evaluation, interpretation, or multi-step reasoning.
+ALL given values in question stem. NO multiple choice.${questionStructure?`\nStyle: ${questionStructure}`:''}
+
+Return ONLY valid JSON array with ONE question:
+[{"number":${totalQSoFar+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":14,"parts":[{"part":"a","question":"First sub-part","marks":2,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`
+      : `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
+Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
+Difficulty: ${difficultyMode==='exam-plus'?'Maximum — multi-concept synthesis, 3+ steps':'Match past paper difficulty'}
+
+Generate exactly 1 extended response question for Section C.
+Hardest question — synthesis of 2-3 concepts, 15-20 marks, 5-6 sub-parts.
+For Physics: velocity selector, orbital mechanics+circular motion, OR solenoid+force.
+For other subjects: most complex synthesis topic.
+RULES: ALL given values in stem, include diagram if relevant, parts a-f build progressively, final part = evaluation.
+
+Return ONLY valid JSON array with ONE question:
+[{"number":${totalQSoFar+1},"question":"Full extended scenario with ALL given values","topic":"Topic","marks":18,"isExtended":true,"diagram":{"type":"parallel-plates","description":"Velocity selector setup","params":{"separation":"3.0 cm","voltage":"4500 V","particleCharge":"positive","topPlatePolarity":"positive"}},"parts":[{"part":"a","question":"First sub-part","marks":2,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`
+
+    const call4Text = await callClaude(sys, call4Prompt, 3000)
+
+    let extQs = extractJsonArray(call4Text)||[]
+    extQs = extQs.map((q,i)=>({...q, number:totalQSoFar+i+1, isExtended:!longAnswerOnly}))
+    extQs = extQs.map(q=>{
+      if(q.diagram){ const svg=renderDiagramSVG(q.diagram); if(svg) return{...q,diagram:{...q.diagram,svg}} }
+      return q
+    })
+
+    // Add Section C for MCQ papers, or merge into questions for long-answer papers
+    if(extQs.length>0){
+      if(longAnswerOnly){
+        // Just add to the single questions section
+        if(sectionB){ sectionB.questions=[...(sectionB.questions||[]),...extQs]; sectionB.marks=sectionB.questions.reduce((s,q)=>s+(q.marks||0),0) }
+      } else {
+        paper.sections=[...(paper.sections||[]),{
+          name:'Section C: Extended Response', type:'extended',
+          marks:extQs.reduce((s,q)=>s+(q.marks||0),0),
+          instructions:'Answer ALL questions. Show all working clearly. Marks are awarded for correct method and working.',
+          questions:extQs
+        }]
+      }
     }
 
-    return res.status(200).json({ ok: true, paperId, coverage })
+    // Final total
+    const finalTotal = (paper.sections||[]).reduce((s,sec)=>s+sec.marks,0)
+    paper.totalMarks = finalTotal
+    if(paper.coverPage) paper.coverPage.totalMarks = finalTotal
 
-  } catch (e) {
+    const topicsCovered = [...new Set(
+      (paper.sections||[]).flatMap(s=>s.questions||[]).map(q=>q.topic).filter(Boolean)
+    )]
+
+    // Build comparison metadata for post-generation scorecard
+    const allScopeTopics = scopeTopics || []
+    const coveredInThisPaper = [...new Set(
+      (paper.sections||[]).flatMap(s=>s.questions||[]).map(q=>q.topic).filter(Boolean)
+    )]
+    const formatMatch = {
+      hasMCQ: !longAnswerOnly,
+      expectedMCQ: !longAnswerOnly,
+      sectionCount: (paper.sections||[]).length,
+      totalMarks: finalTotal,
+      expectedMarks: confirmedScope?.format?.totalMarks || finalTotal,
+    }
+    const topicCoveragePercent = allScopeTopics.length > 0
+      ? Math.round((coveredInThisPaper.filter(t => allScopeTopics.some(s=>s.toLowerCase().includes(t.toLowerCase().slice(0,8)))).length / allScopeTopics.length) * 100)
+      : 100
+    const formatMatchPercent = formatMatch.hasMCQ === formatMatch.expectedMCQ ? 100 : 60
+    const overallMatch = Math.round((topicCoveragePercent * 0.6) + (formatMatchPercent * 0.4))
+
+    // Save as READY at 100%
+    const record = {
+      id:jobId, slotNumber, subjectId, subjectName:name,
+      levelDescription:levelDesc, examBoard,
+      scopeTerm:scopeTerm||null, scopeExamType:scopeType, difficultyMode,
+      generatedAt:new Date().toISOString(), completedAt:new Date().toISOString(),
+      sourceType:allDocs.length>0?'docs':'syllabus', docCount:allDocs.length,
+      topicsCovered:coveredInThisPaper, status:'ready', progress:100, paper,
+      comparison: {
+        overallMatch,
+        topicCoveragePercent,
+        formatMatchPercent,
+        formatMatch,
+        coveredTopics: coveredInThisPaper,
+        gapTopics: allScopeTopics.filter(t => !coveredInThisPaper.some(c=>c.toLowerCase().includes(t.toLowerCase().slice(0,8)))),
+        strikeRate: overallMatch >= 90 ? '90%+ match' : overallMatch >= 80 ? '80%+ match' : `${overallMatch}% match`
+      }
+    }
+
+    const finalPapers = await redisGet(paperKey)||[]
+    const fi = finalPapers.findIndex(p=>p.id===jobId)
+    if(fi>=0) finalPapers[fi]=record; else finalPapers.push(record)
+    await redisSet(paperKey, finalPapers.slice(0,5).sort((a,b)=>a.slotNumber-b.slotNumber))
+
+    console.log(`Paper ${slotNumber} COMPLETE — ${finalTotal} marks | ${topicsCovered.length} topics | ${(paper.sections||[]).length} sections`)
+
+    // Email notification
+    try {
+      if(process.env.RESEND_API_KEY){
+        const userData = await redisGet(`sm:profile:${userId}`)
+        const email = userData?.email
+        if(email){
+          await fetch('https://api.resend.com/emails',{
+            method:'POST',
+            headers:{'Authorization':`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},
+            body:JSON.stringify({
+              from:'Student Mastery <papers@datamastery.com.au>',
+              to:email,
+              subject:`Your ${name} Mock Paper ${slotNumber} is ready`,
+              html:`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px"><h2 style="color:#1D9E75">Your mock paper is ready!</h2><p><strong>${name} — Mock Paper ${slotNumber}</strong><br>${finalTotal} marks · ${topicsCovered.slice(0,4).join(', ')}${topicsCovered.length>4?` +${topicsCovered.length-4} more`:''}</p><a href="https://studentmastery.datamastery.com.au/mock-paper" style="display:inline-block;background:#1D9E75;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">View paper →</a></div>`
+            })
+          })
+        }
+      }
+    } catch(emailErr){ console.log('Email skipped:', emailErr.message) }
+
+    res.status(200).json({ ok:true, jobId, slotNumber, totalMarks:finalTotal, sections:(paper.sections||[]).length })
+
+  } catch(e) {
     console.error('mock-worker error:', e.message)
-    return res.status(500).json({ error: e.message })
+    await markFailed(e.message)
+    res.status(500).json({ error: e.message })
   }
 }
