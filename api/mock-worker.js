@@ -744,22 +744,39 @@ Return ONLY valid JSON array with ONE question:
 
     console.log(`Paper ${slotNumber} COMPLETE — ${finalTotal} marks | ${topicsCovered.length} topics | ${(paper.sections||[]).length} sections`)
 
-    // Email notification
+    // Email notification — get email from Clerk API (most reliable)
     try {
-      if(process.env.RESEND_API_KEY){
-        const userData = await redisGet(`sm:profile:${userId}`)
-        const email = userData?.email
-        if(email){
-          await fetch('https://api.resend.com/emails',{
+      if(process.env.RESEND_API_KEY) {
+        let email = null
+        try {
+          if(process.env.CLERK_SECRET_KEY) {
+            const clerkRes = await fetch(`https://api.clerk.com/v1/users/${userId}`, {
+              headers: { Authorization: `Bearer ${process.env.CLERK_SECRET_KEY}` }
+            })
+            if(clerkRes.ok) {
+              const clerkUser = await clerkRes.json()
+              email = clerkUser.email_addresses?.[0]?.email_address
+            }
+          }
+        } catch {}
+        if(!email) {
+          const userData = await redisGet(`sm:profile:${userId}`)
+          email = userData?.email
+        }
+        if(email) {
+          await fetch('https://api.resend.com/emails', {
             method:'POST',
             headers:{'Authorization':`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},
             body:JSON.stringify({
               from:'Student Mastery <papers@datamastery.com.au>',
               to:email,
               subject:`Your ${name} Mock Paper ${slotNumber} is ready`,
-              html:`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px"><h2 style="color:#1D9E75">Your mock paper is ready!</h2><p><strong>${name} — Mock Paper ${slotNumber}</strong><br>${finalTotal} marks · ${topicsCovered.slice(0,4).join(', ')}${topicsCovered.length>4?` +${topicsCovered.length-4} more`:''}</p><a href="https://studentmastery.datamastery.com.au/mock-paper" style="display:inline-block;background:#1D9E75;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">View paper →</a></div>`
+              html:`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px"><h2 style="color:#1D9E75;margin-bottom:8px">Your mock paper is ready! 🎉</h2><p style="color:#374151;margin-bottom:16px"><strong>${name} — Mock Paper ${slotNumber}</strong><br>${finalTotal} marks · ${topicsCovered.slice(0,3).join(', ')}${topicsCovered.length>3?' +'+String(topicsCovered.length-3)+' more':''}</p><a href="https://studentmastery.datamastery.com.au/mock-paper" style="display:inline-block;background:#1D9E75;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">View your paper →</a><p style="color:#9ca3af;font-size:12px;margin-top:24px">Student Mastery · datamastery.com.au</p></div>`
             })
           })
+          console.log(`Email sent to ${email}`)
+        } else {
+          console.log('Email skipped — no email found for user')
         }
       }
     } catch(emailErr){ console.log('Email skipped:', emailErr.message) }
