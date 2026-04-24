@@ -540,6 +540,8 @@ export default function MockPaper() {
       await loadSubjectPapers()
     } catch(e) { setError(e.message) }
   }
+
+  async function deletePaper(paperId) {
     try { const token=await getToken(); await fetch(`/api/papers?subjectId=${selectedSubjectId}&paperId=${paperId}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}}); await loadSubjectPapers() } catch {}
   }
 
