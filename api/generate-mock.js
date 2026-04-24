@@ -87,11 +87,13 @@ export default async function handler(req, res) {
 
     const payload = {
       jobId, userId, subjectId, slotNumber,
-      customInstructions, confirmedScope: scope, difficultyMode
+      customInstructions, confirmedScope: scope, difficultyMode,
+      phase: 1
     }
 
     if (process.env.QSTASH_TOKEN) {
-      const qRes = await fetch(`https://qstash.upstash.io/v2/publish/${workerUrl}`, {
+      const qstashBase = process.env.QSTASH_URL || 'https://qstash.upstash.io'
+      const qRes = await fetch(`${qstashBase}/v2/publish/${workerUrl}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${process.env.QSTASH_TOKEN}`,

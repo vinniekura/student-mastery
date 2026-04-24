@@ -346,7 +346,8 @@ export default async function handler(req, res) {
     const url  = `https://${host}/api/mock-worker`
     const payload = { jobId, userId, subjectId, slotNumber, customInstructions, confirmedScope, difficultyMode, phase: nextPhase, partialPaper: paper, ...extraData }
     if (!process.env.QSTASH_TOKEN) { console.warn('No QSTASH_TOKEN — phase chain broken'); return false }
-    const qRes = await fetch(`https://qstash.upstash.io/v2/publish/${url}`, {
+    const qstashBase = process.env.QSTASH_URL || 'https://qstash.upstash.io'
+    const qRes = await fetch(`${qstashBase}/v2/publish/${url}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${process.env.QSTASH_TOKEN}`, 'Content-Type': 'application/json', 'Upstash-Retries': '0' },
       body: JSON.stringify(payload)
@@ -451,12 +452,14 @@ CRITICAL RULES:
 - Parts must build — part b uses result from part a
 - Diagram types: "parallel-plates","magnetic-field","gravitational-field","two-charges","free-body","circuit","wave"`
 
+    // Long-answer papers need more tokens — 4 questions × ~600 tokens each = 2400 min
+    const call2Tokens = longAnswerOnly ? 4000 : 2800
     const saText = await callClaude(sys,
 `${ctx}
 
 ${saPromptFormat}
 
-Return ONLY a valid JSON array:
+Return ONLY a valid JSON array, no markdown:
 [{
   "number":${mcqQs.length+1},
   "question":"Full scenario with ALL given values. [N Marks – m1,m2,m3,...] where m1 m2 etc are marks per sub-part",
@@ -470,7 +473,7 @@ Return ONLY a valid JSON array:
     "answer":"Full worked solution with units",
     "markingCriteria":"Award 1 mark for [X]. Award 1 mark for [Y]."
   }]
-}]`, 2800)
+}]`, call2Tokens)
 
     let saQs = extractJsonArray(saText) || []
     saQs = saQs.map((q,i)=>({...q, number: mcqQs.length+i+1}))
@@ -591,7 +594,8 @@ Diagram types: "parallel-plates","magnetic-field","gravitational-field","two-cha
 Return ONLY valid JSON array:
 [{"number":${existingQCount+1},"question":"Full scenario with ALL given values","topic":"Topic","marks":10,"diagram":{"type":"gravitational-field","description":"g vs distance graph","params":{"bodyName":"Earth","surfaceG":"9.8"}},"parts":[{"part":"a","question":"Sub-question","marks":3,"answer":"Solution","markingCriteria":"Award marks for..."}]}]`
 
-    const call3Text = await callClaude(sys, call3Prompt, 2800)
+    const call3Tokens = longAnswerOnly ? 4000 : 2800
+    const call3Text = await callClaude(sys, call3Prompt, call3Tokens)
 
     let saQs2 = extractJsonArray(call3Text)||[]
     saQs2 = saQs2.map((q,i)=>({...q, number:existingQCount+i+1}))
