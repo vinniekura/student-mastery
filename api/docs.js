@@ -183,11 +183,14 @@ Analyse the exam papers and extract:
 
 3. EXAM FORMAT — CRITICAL: look very carefully at the actual structure:
    - Does this paper have Multiple Choice questions? (Look for A. B. C. D. options)
-   - Does this paper have ONLY long answer / multi-part questions like (a)(b)(c)(d)?
-   - EXACTLY how many questions does the paper have? (Count them)
-   - What is the mark allocation format? e.g. "[9 Marks – 1,1,2,3,2]" or "[4 marks]"
+   - Does this paper have ONLY long answer / multi-part questions like (a)(b)(c)(d)?(e)?
+   - EXACTLY how many questions does the paper have? COUNT THEM — this is mandatory
+   - What is the mark allocation format? e.g. "[9 Marks – 1,1,2,3,2]" means total marks listed per sub-part
    - What are the actual section names (if any)?
-   - Total marks, time allowed, marks per question
+   - Total marks and time allowed
+   - Typical marks per question (range)
+   
+   MANDATORY fields to extract: questionCount, totalMarks, timeMins, marksPerQuestion
 
 4. SPECIFIC SUB-TOPICS — list every specific concept, technique, formula tested.
    Rules:

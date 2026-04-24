@@ -406,10 +406,28 @@ export default async function handler(req, res) {
     const sectionType  = confirmedScope?.sectionType || 'mcq-and-long-answer'
     const longAnswerOnly = !hasMCQ || sectionType === 'long-answer-only'
     const questionStructure = confirmedScope?.format?.questionStructure || ''
-    const targetQuestionCount = confirmedScope?.format?.questionCount || (longAnswerOnly ? 13 : 4)
-    const marksPerQuestion = confirmedScope?.format?.marksPerQuestion || (longAnswerOnly ? '5-8' : '8-12')
-    // Distribute questions across 3 calls: ~4 each for long-answer, 2 each for MCQ format
-    const qPerCall = longAnswerOnly ? Math.ceil(targetQuestionCount / 3) : 2
+    // ── Format parameters — all driven by detected scope, never hardcoded ──────
+    const detectedQuestionCount = confirmedScope?.format?.questionCount
+    const detectedMarksPerQ     = confirmedScope?.format?.marksPerQuestion
+    const detectedTotalMarks    = confirmedScope?.format?.totalMarks
+    const detectedTimeMins      = confirmedScope?.format?.timeMins
+
+    // Fallback: infer from totalMarks if questionCount not detected
+    // e.g. 77 marks ÷ 6 marks/q ≈ 13 questions
+    const inferredQCount = detectedTotalMarks
+      ? Math.round(detectedTotalMarks / (longAnswerOnly ? 6 : 10))
+      : (longAnswerOnly ? 12 : 4)
+
+    const targetQuestionCount = detectedQuestionCount || inferredQCount
+    const marksPerQuestion    = detectedMarksPerQ || (longAnswerOnly ? '5-8' : '8-12')
+
+    // Split across 4 phases — each phase generates ~targetQuestionCount/4 questions
+    // Cap at 4 per phase to stay within token limits
+    const qPerPhase = Math.min(4, Math.ceil(targetQuestionCount / 4))
+    const qPerCall  = longAnswerOnly ? qPerPhase : 2
+
+    console.log(`Format: ${targetQuestionCount} questions × ~${marksPerQuestion} marks (detected: questionCount=${detectedQuestionCount}, totalMarks=${detectedTotalMarks})`)
+    console.log(`Generation: ${qPerCall} questions/phase × 4 phases = ~${qPerCall*4} total questions`)
 
     const ctx = `Subject: ${name} | Level: ${levelDesc} | Exam board: ${examBoard}
 Topics (ONLY these): ${topicsList}${scopeTerm?` | Scope: ${scopeTerm}`:''}
@@ -619,7 +637,24 @@ Return ONLY valid JSON array:
       return res.status(200).json({ ok:true, jobId, phase:2, progress:50 })
     }
 
-    // ── CALL 4: Extended/hardest question (format-aware) ─────────────────────
+    // ── PHASE 3 COMPLETE — queue phase 4 ───────────────────────────────────────
+    const p3save = await redisGet(paperKey)||[]
+    const p3i = p3save.findIndex(p=>p.id===jobId)
+    if(p3i>=0){ p3save[p3i].progress=75; p3save[p3i].paper=paper; await redisSet(paperKey,p3save) }
+    if(phase === 3) {
+      console.log(`Paper ${slotNumber} phase 3 (75%) — queuing phase 4`)
+      await queueNextPhase(4, paper)
+      return res.status(200).json({ ok:true, jobId, phase:3, progress:75 })
+    }
+
+    // Restore paper for phase 4
+    if(phase === 4 && partialPaper) {
+      if(partialPaper.sections) paper.sections = partialPaper.sections
+      if(partialPaper.diagrams) paper.diagrams = partialPaper.diagrams
+      if(partialPaper.coverPage) paper.coverPage = partialPaper.coverPage
+    }
+
+        // ── CALL 4: Extended/hardest question (format-aware) ─────────────────────
     const totalQSoFar = existingQCount + saQs2.length
 
     const call4Prompt = longAnswerOnly
@@ -671,10 +706,7 @@ Return ONLY valid JSON array with ONE question:
       }
     }
 
-    // ── PHASE 3 COMPLETE — update to 75% then save ready ────────────────────
-    const p100 = await redisGet(paperKey)||[]
-    const p100i = p100.findIndex(p=>p.id===jobId)
-    if(p100i>=0){ p100[p100i].progress=75; p100[p100i].paper=paper; await redisSet(paperKey,p100) }
+    // ── PHASE 4 COMPLETE — save ready ───────────────────────────────────────────
 
     // Final total
     const finalTotal = (paper.sections||[]).reduce((s,sec)=>s+sec.marks,0)
