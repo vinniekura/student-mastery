@@ -80,7 +80,7 @@ export default function Dashboard() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {subjects.slice(0, 5).map(s => (
-                <Link key={s.id} to={`/subjects/${s.id}/edit`} style={{ textDecoration: 'none' }}>
+                <Link key={s.id} to={`/subjects/${s.id}`} style={{ textDecoration: 'none' }}>
                   <div style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '10px 12px', borderRadius: 8,
