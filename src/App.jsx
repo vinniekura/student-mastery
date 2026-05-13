@@ -6,7 +6,7 @@ import SubjectHub from './pages/SubjectHub'
 import MockPaper from './pages/MockPaper'
 import Calendar from './pages/Calendar'
 import Settings from './pages/Settings'
-import './App.css'
+import './index.css'
 
 const App = () => {
   const { isSignedIn, user } = useUser()
