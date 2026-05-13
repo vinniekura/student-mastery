@@ -1,0 +1,126 @@
+# What Every SES Executive Must Know Before Signing an AI Vendor Contract
+
+## OVERVIEW
+
+The Australian Public Service AI Plan 2025 has accelerated AI adoption across federal agencies faster than procurement frameworks have adapted. Chief AI Officers are being appointed, GovAI procurement structures are taking shape, and departments face genuine pressure to demonstrate progress. That pressure is landing directly on SES officers who are being asked to sign off on AI vendor agreements — often without the technical or legal background to identify what is buried in the contract language.
+
+This is not a theoretical risk. AI vendor agreements routinely contain clauses governing data rights, model training, liability limitations, and service continuity that can bind an agency for years. The consequences of signing poorly negotiated contracts extend well beyond budget overruns. They can compromise citizen data, expose agencies to reputational harm, create sovereignty vulnerabilities, and leave executives locked into vendor relationships they cannot exit on reasonable terms.
+
+This document translates the AI contract landscape into plain-language decisions that an SES officer can own. It covers the three most consequential risk areas — data rights, vendor lock-in, and liability — and provides practical tests an executive can apply before any contract goes to signature.
+
+---
+
+## Data Rights: The Most Consequential Clause in Any AI Contract
+
+**The single most important question to ask about any AI vendor contract is: what happens to your agency's data once it enters the vendor's system?**
+
+Many AI platforms — particularly those built on large language models — include training clauses that allow the vendor to use data submitted through the platform to improve their underlying models. In a commercial context, this is an inconvenience. In government, where that data may include sensitive policy deliberations, citizen records, or procurement intelligence, it represents a serious and potentially irreversible problem.
+
+Three specific provisions require scrutiny before signature:
+
+**Training and fine-tuning rights.** Can the vendor use your agency's inputs to train or improve their model? This must be explicitly prohibited for government data. Critically, that prohibition must appear in the contract itself — not in a terms-of-service document the vendor can update unilaterally. A verbal assurance or a reference to a policy page is not enforceable.
+
+**Data residency.** Where is your data stored and processed? Under the APS AI Plan 2025, agencies are expected to maintain clear visibility over data sovereignty. If a contract references "global infrastructure," that phrase is not an answer — it is a deflection. The contract should specify the jurisdiction, and that specification should be binding.
+
+**Data retention and deletion.** What happens to your agency's data when the contract ends? Some vendors retain data for months or years after contract termination. An enforceable deletion clause with a defined timeframe is essential. Vague commitments to "follow industry best practice" are not contractually meaningful.
+
+**Practical test for executives:** Before any AI contract goes to signature, your legal and data teams should produce a one-page plain-language summary of what data rights the vendor claims under that agreement. If they cannot produce that summary, the contract is not ready to sign.
+
+---
+
+## Vendor Lock-In: A Procurement Risk with Sovereignty Implications
+
+**Vendor lock-in in AI contracts is not merely a technical problem — it is a procurement risk with budget, continuity, and sovereignty implications that deserve the same scrutiny as any major infrastructure commitment.**
+
+Lock-in in AI procurement occurs through three distinct mechanisms, each of which can compound the others:
+
+**Model dependency.** If an AI system is trained on your agency's data in a proprietary format, switching vendors may require starting over — losing months of fine-tuning and institutional knowledge embedded in the model. That represents a real operational cost that is difficult to quantify at contract signature but becomes significant at renewal.
+
+**Output portability.** Some vendors do not permit agencies to export the outputs, configurations, or trained parameters of the AI system built on their platform. In practice, the agency is renting capability rather than owning it. When the contract ends or the vendor increases pricing, the agency has limited negotiating leverage.
+
+**Integration depth.** The more deeply an AI vendor's tools are embedded in operational workflows — case management, document processing, public-facing services — the more expensive and disruptive exit becomes. By the time a contract reaches renewal, the practical cost of leaving may substantially exceed the cost of accepting unfavourable terms.
+
+The APS procurement framework requires consideration of supplier dependency risk. However, that guidance was developed before AI-specific lock-in patterns were well understood. The existing framework does not fully address the model portability, data portability, and transition cost dynamics specific to AI vendor relationships.
+
+**Practical test for executives:** Ask the vendor, in writing, what it would cost in time and money for your agency to migrate to a competitor. Their answer — or their reluctance to provide one — is informative. A vendor confident in their product's value will answer clearly. Resistance to the question warrants scrutiny.
+
+**What to negotiate:** Every AI contract should include, from day one, provisions for data portability, model portability, and a transition assistance clause requiring the vendor to actively support migration if the relationship ends. These are reasonable commercial terms. A vendor that resists them is signalling something about the relationship you are about to enter.
+
+---
+
+## Liability Clauses: Written for the Vendor, Not for Your Agency
+
+**Most AI vendor contracts contain liability limitations structured to protect the vendor's commercial interests, not the agency's operational and legal obligations.**
+
+Standard liability clauses in AI vendor agreements typically cap the vendor's financial exposure at a fraction of contract value — often the fees paid in the prior twelve months. In practice, this means that if an AI system produces harmful outputs, fails during a critical service, or causes a data breach, the vendor's maximum liability may be a small fraction of the actual damage to the agency, to citizens, or to public trust.
+
+Several specific patterns require attention:
+
+**Liability caps on consequential loss.** Most AI vendor contracts exclude liability for indirect or consequential loss. For government agencies, the consequences of AI failure — harm to citizens, regulatory breach, parliamentary scrutiny — are almost entirely in that excluded category.
+
+**Indemnity asymmetries.** Vendor contracts frequently require the agency to indemnify the vendor against claims arising from the agency's use of the AI system. Read carefully: the agency may be contractually accepting liability for outcomes driven by the vendor's model.
+
+**Performance warranties and their limits.** AI systems are probabilistic. Vendors will resist hard performance warranties, and there is a legitimate technical basis for that position. However, the contract should specify what service levels apply, what remedies exist when those levels are not met, and who bears responsibility for downstream decisions made on the basis of AI outputs.
+
+**The human oversight question.** Under the APS AI Plan 2025 and emerging Australian AI governance frameworks, agencies retain accountability for decisions that affect citizens regardless of whether AI was involved. Contracts that appear to shift accountability to the vendor do not actually transfer the agency's legal and ethical obligations. They create confusion about accountability without eliminating it.
+
+**Practical test for executives:** Have your legal team map the liability clause against your agency's actual risk exposure. If the gap between the vendor's maximum liability and your agency's realistic exposure is large, that gap is your agency's unmitigated risk. It should be a negotiating priority, not an accepted condition.
+
+---
+
+## What Good Contract Governance Looks Like in Practice
+
+**Signing an AI vendor contract is a governance decision, not an IT procurement decision. It requires the same level of executive attention as any other decision with multi-year operational and reputational consequences.**
+
+Several practical governance steps reduce risk before and after signature:
+
+Prior to signature, require a structured pre-contract review that addresses data rights, lock-in risk, and liability exposure as distinct checklist items. This review should involve legal, data, and security functions — not be delegated entirely to a procurement team under delivery pressure.
+
+Ensure the contract includes a **clear exit clause** with defined notice periods, transition support obligations, and data deletion timelines. Exit terms negotiated at the start of a relationship are far easier to secure than those negotiated under pressure at renewal.
+
+Require **regular contract reviews** — not just at renewal. AI vendor relationships evolve: product changes, pricing structures shift, new terms are introduced. A contract that was acceptable at signature may contain embedded risks twelve months later if the vendor has updated their platform terms.
+
+Establish internal accountability for **ongoing AI contract oversight**. The appointment of Chief AI Officers under the APS AI Plan 2025 creates a natural governance function for this. That role should include visibility over active AI vendor agreements, not just responsibility for new procurement decisions.
+
+---
+
+## FACTS & STATISTICS
+
+- The **APS AI Plan 2025** mandates appointment of Chief AI Officers across federal agencies and establishes the GovAI procurement framework.
+- AI vendor contracts commonly cap vendor liability at **fees paid in the prior twelve months** — a fraction of realistic exposure in government service delivery contexts.
+- Standard vendor terms-of-service documents for major AI platforms are **updated unilaterally** by vendors, meaning protections referenced in contracts by URL or policy name rather than direct inclusion may not persist.
+- The APS procurement framework's supplier dependency risk requirements **predate AI-specific lock-in patterns** including model portability, output portability, and integration depth dynamics.
+- Under Australian AI governance frameworks, **agencies retain accountability** for citizen-affecting decisions regardless of AI involvement — vendor indemnity clauses do not transfer this obligation.
+- Data residency requirements under the APS AI Plan 2025 require **jurisdictional specificity** — references to "global infrastructure" do not satisfy sovereign data obligations.
+
+---
+
+## REFERENCES & FRAMEWORKS
+
+**APS AI Plan 2025** — Establishes the policy basis for Chief AI Officers, GovAI procurement, and AI governance obligations across federal agencies. Sets expectations for data sovereignty and human oversight.
+
+**Commonwealth Procurement Rules (CPRs)** — Govern supplier dependency risk assessment requirements in APS procurement. Applicable to AI vendor selection; do not yet fully address AI-specific lock-in dynamics.
+
+**Australian Government Protective Security Policy Framework (PSPF)** — Relevant to data classification, residency requirements, and vendor access to government data.
+
+**Privacy Act 1988 (Cth) and Australian Privacy Principles (APPs)** — Govern handling of personal information, including data shared with AI vendors. APP 8 addresses cross-border disclosure.
+
+**Essential Eight Maturity Model (ACSC)** — Cybersecurity baseline relevant to AI vendor access and integration risk assessment.
+
+**OECD AI Principles** — International framework for trustworthy AI; referenced in Australian government AI ethics guidance. Principles include transparency, accountability, and human oversight.
+
+**NIST AI Risk Management Framework (AI RMF)** — US framework increasingly referenced in Australian government AI governance discussions. Provides structured approach to AI risk categorisation applicable to vendor assessment.
+
+---
+
+## KEY TAKEAWAYS
+
+- **Data rights are the highest-stakes clause in any AI vendor contract.** Training rights, data residency, and deletion obligations must be explicit, enforceable, and written into the contract itself — not delegated to vendor terms-of-service documents that can be updated unilaterally.
+
+- **Vendor lock-in in AI is a procurement risk, not just a technical one.** Model dependency, output portability restrictions, and integration depth all compound over time. Exit strategy and transition assistance terms must be negotiated at the start of the relationship, not at renewal.
+
+- **Liability clauses in AI vendor contracts are structured to protect the vendor.** Liability caps, consequential loss exclusions, and indemnity asymmetries leave agencies carrying risks that are not reflected in the contract's face value. The gap between vendor liability and agency exposure is unmitigated risk.
+
+- **Signing an AI contract is a governance decision.** It requires structured pre-contract review involving legal, data, and security functions — not delegation to a procurement team under delivery pressure. Ongoing oversight, not just initial sign-off, is required.
+
+- **The APS AI Plan 2025 creates accountability that contracts cannot transfer.** Agencies remain responsible for decisions affecting citizens regardless of AI involvement. Contract structures that appear to shift accountability to vendors create confusion without eliminating the agency's legal and ethical obligations.

@@ -1,0 +1,30 @@
+TITLE:
+AI Vendor Contracts: What Every SES Executive Must Know (2025)
+
+---
+
+DESCRIPTION:
+You're being asked to sign AI vendor contracts worth millions — but do you actually understand what's inside them? As the APS AI Plan 2025 reshapes how federal agencies procure and govern artificial intelligence, SES officers and senior executives are approving agreements that contain hidden data rights clauses, vendor lock-in traps, and liability provisions that could expose your agency for years. This video cuts through the legal fog.
+
+In this presentation, you'll learn how to identify the most dangerous clauses in AI vendor agreements, what the new contractor transparency requirements under the APS AI Plan actually mean for procurement decisions, how to ask the right questions about data sovereignty and model training rights, and what a defensible approval process looks like when you're the one signing off.
+
+This is essential viewing for SES Band 1, 2, and 3 officers, Chief AI Officers, procurement leads, and senior executives in Australian federal government agencies who are navigating GovAI procurement for the first time — or realising too late that last year's contracts didn't protect them.
+
+If you want to lead AI governance with confidence rather than just compliance, subscribe to this channel and visit datamastery.com.au for frameworks, templates, and plain-language guidance built specifically for the Australian Public Service.
+
+#AustralianGovernment #AIGovernance #APSLeadership #GovAI
+
+---
+
+TAGS:
+AI vendor contracts, APS AI Plan 2025, Chief AI Officer, Australian Public Service, SES executive, federal government AI, GovAI procurement, AI governance Australia, government AI procurement, AI contract risks, data sovereignty Australia, vendor lock-in risk, AI liability clauses, AI transparency requirements, APS procurement, senior executive service, federal agency AI, artificial intelligence policy Australia, AI data rights, government technology procurement
+
+---
+
+HOOK:
+"Somewhere in your agency right now, there is probably an AI vendor contract — either already signed, or sitting in your inbox waiting for approval. And buried inside that contract are clauses about who owns the data your agency feeds into that system, whether the vendor can use it to train their commercial models, and who carries the liability if the AI produces a decision that ends up in front of a Senate estimates committee. Here's the uncomfortable truth: most of the SES officers approving these agreements have never had those clauses translated into plain English. Today, that changes."
+
+---
+
+SHORT_DESCRIPTION:
+Before you sign another AI vendor contract, watch this — a plain-language guide for SES executives on the data rights, lock-in risks, and liability traps hidden in AI procurement agreements under the APS AI Plan 2025.
