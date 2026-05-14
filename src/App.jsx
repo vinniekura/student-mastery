@@ -81,8 +81,9 @@ const AppContent = () => {
         <Routes>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/subjects" element={<SubjectHub />} />
+          <Route path="/subjects/:subjectId" element={<SubjectDetail />} />           {/* NEW */}
           <Route path="/subjects/:subjectId/mock-paper" element={<MockPaper />} />
-          <Route path="/mock-paper" element={<Navigate to="/subjects" replace />} />
+          <Route path="/subjects/:subjectId/quiz" element={<QuizGenerator />} />     {/* NEW */}
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
