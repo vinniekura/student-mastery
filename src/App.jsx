@@ -4,7 +4,7 @@ import { UserButton, useUser, SignIn } from '@clerk/clerk-react'
 import SubjectDetail from './pages/SubjectDetail'
 import QuizGenerator from './pages/QuizGenerator'
 import Dashboard from './pages/Dashboard'
-import SubjectHub from './pages/SubjectHub'
+import Subjects from './pages/Subjects'
 import MockPaper from './pages/MockPaper'
 import Calendar from './pages/Calendar'
 import Settings from './pages/Settings'
@@ -82,7 +82,7 @@ const AppContent = () => {
       <main className="main-content">
         <Routes>
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/subjects" element={<SubjectHub />} />
+          <Route path="/subjects" element={<Subjects />} />
           <Route path="/subjects/:subjectId" element={<SubjectDetail />} />           {/* NEW */}
           <Route path="/subjects/:subjectId/mock-paper" element={<MockPaper />} />
           <Route path="/subjects/:subjectId/quiz" element={<QuizGenerator />} />     {/* NEW */}
