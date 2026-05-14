@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import { useSubjectsStore } from '../store/subjects.js'
+import { useParams } from 'react-router-dom'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -429,8 +430,9 @@ function ComparisonCard({ comparison, docCount }) {
 export default function MockPaper() {
   const { getToken } = useAuth()
   const { subjects, fetchSubjects } = useSubjectsStore()
+  const { subjectId: urlSubjectId } = useParams()
 
-  const [selectedSubjectId, setSelectedSubjectId] = useState('')
+  const [selectedSubjectId, setSelectedSubjectId] = useState(urlSubjectId || '')
   const [subjectPapers, setSubjectPapers]         = useState([])
   const [loadingPapers, setLoadingPapers]         = useState(false)
   const [submitting, setSubmitting]               = useState(false)
@@ -447,7 +449,11 @@ export default function MockPaper() {
   const pollRef = useRef(null)
 
   useEffect(() => { getToken().then(t => fetchSubjects(t)); return () => clearInterval(pollRef.current) }, [])
-
+  useEffect(() => {
+  if (urlSubjectId && !selectedSubjectId) {
+    setSelectedSubjectId(urlSubjectId)
+  }
+}, [urlSubjectId])
   useEffect(() => {
     clearInterval(pollRef.current)
     setError(null); setSlotsExhausted(false); setScope(null); setSubjectDocs([])
