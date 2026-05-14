@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { BrowserRouter, Routes, Route, NavLink, useNavigate } from 'react-router-dom'
-import { UserButton, useUser } from '@clerk/clerk-react'
+import { BrowserRouter, Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom'
+import { UserButton, useUser, SignIn } from '@clerk/clerk-react'
 import Dashboard from './pages/Dashboard'
 import SubjectHub from './pages/SubjectHub'
 import MockPaper from './pages/MockPaper'
@@ -8,19 +8,28 @@ import Calendar from './pages/Calendar'
 import Settings from './pages/Settings'
 import './index.css'
 
-const App = () => {
-  const { isSignedIn, user } = useUser()
+// ─────────────────────────────────────────────────────────────────────────────
+// INNER APP (inside BrowserRouter, can use hooks)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AppContent = () => {
+  const { isSignedIn, user, isLoaded } = useUser()
   const navigate = useNavigate()
   const [darkMode, setDarkMode] = useState(true)
 
+  // Redirect to sign-in if not authenticated
   useEffect(() => {
-    if (!isSignedIn) {
-      navigate('/login')
+    if (isLoaded && !isSignedIn) {
+      navigate('/sign-in')
     }
-  }, [isSignedIn])
+  }, [isSignedIn, isLoaded, navigate])
+
+  if (!isLoaded) {
+    return <div className="loading">Loading authentication...</div>
+  }
 
   if (!isSignedIn) {
-    return <div className="loading">Loading...</div>
+    return <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" />
   }
 
   // Navigation items with emoji icons
@@ -34,7 +43,7 @@ const App = () => {
 
   return (
     <div className={`app-layout ${darkMode ? 'dark' : 'light'}`}>
-      {/* ─── SIDEBAR ─────────────────────────────────────────────────── */}
+      {/* ─── SIDEBAR ─────────────────────────────────────────────────────── */}
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1 className="app-title">Student Mastery</h1>
@@ -62,23 +71,37 @@ const App = () => {
           >
             {darkMode ? '☀️' : '🌙'}
           </button>
-          <UserButton afterSignOutUrl="/login" />
+          <UserButton afterSignOutUrl="/sign-in" />
         </div>
       </aside>
 
-      {/* ─── MAIN CONTENT ────────────────────────────────────────────── */}
+      {/* ─── MAIN CONTENT ────────────────────────────────────────────────── */}
       <main className="main-content">
         <Routes>
+          <Route path="/sign-in" element={<SignIn routing="path" path="/sign-in" />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/subjects" element={<SubjectHub />} />
           <Route path="/subjects/:subjectId/mock-paper" element={<MockPaper />} />
           <Route path="/mock-paper" element={<SubjectHub />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="*" element={<Dashboard />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
     </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OUTER APP (wraps everything with BrowserRouter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const App = () => {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   )
 }
 
