@@ -21,22 +21,14 @@ const SubjectHub = () => {
     try {
       setLoading(true)
       setError('')
-      
-      // Get the Clerk token
       const token = await getToken()
-      
-      // Include Authorization header
       const res = await fetch('/api/subjects', {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
       })
-
       if (!res.ok) {
         const err = await res.json()
         throw new Error(err.error || `Failed to load subjects (${res.status})`)
       }
-
       const data = await res.json()
       setSubjects(data.subjects || [])
     } catch (e) {
@@ -50,10 +42,8 @@ const SubjectHub = () => {
   const handleAddSubject = async (e) => {
     e.preventDefault()
     if (!newSubjectName.trim()) return
-
     try {
       const token = await getToken()
-      
       const res = await fetch('/api/subjects', {
         method: 'POST',
         headers: {
@@ -66,12 +56,10 @@ const SubjectHub = () => {
           year: 12
         })
       })
-
       if (!res.ok) {
         const err = await res.json()
         throw new Error(err.error || 'Failed to create subject')
       }
-
       const newSubject = await res.json()
       setSubjects([...subjects, newSubject])
       setNewSubjectName('')
@@ -86,78 +74,116 @@ const SubjectHub = () => {
   }
 
   if (!isLoaded) {
-    return <div className="loading">Loading...</div>
+    return <div style={{padding: '2rem'}}>Loading...</div>
   }
 
   return (
-    <div className="subject-hub">
-      <h1>My Subjects</h1>
+    <div style={{padding: '2rem'}}>
+      <h1 style={{marginBottom: '2rem'}}>My Subjects</h1>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && <div style={{color: 'red', marginBottom: '1rem'}}>{error}</div>}
 
       {loading ? (
-        <div className="loading">Loading subjects...</div>
+        <div>Loading subjects...</div>
       ) : (
         <>
-          <div className="subjects-grid">
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem', marginBottom: '2rem'}}>
             {subjects.map((subject) => (
               <div 
                 key={subject.id} 
-                className="subject-card"
                 onClick={() => handleSelectSubject(subject.id)}
+                style={{
+                  padding: '1rem',
+                  border: '1px solid #444',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  background: '#1e293b',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = '#0ea5e9'
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(14, 165, 233, 0.1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = '#444'
+                  e.currentTarget.style.boxShadow = 'none'
+                }}
               >
-                <h3>{subject.name}</h3>
-                <p className="subject-meta">
+                <h3 style={{margin: '0 0 0.5rem 0', color: '#fff'}}>{subject.name}</h3>
+                <p style={{margin: '0.25rem 0', color: '#888', fontSize: '0.9rem'}}>
                   {subject.examBoard} • Year {subject.year}
                 </p>
-                <p className="subject-topics">
+                <p style={{margin: '0.25rem 0', color: '#0ea5e9', fontSize: '0.9rem'}}>
                   {subject.topics?.length || 0} topics
                 </p>
               </div>
             ))}
 
-            {/* Add new subject card */}
             {!showAddSubject && (
               <div 
-                className="subject-card add-subject-card"
                 onClick={() => setShowAddSubject(true)}
+                style={{
+                  padding: '1rem',
+                  border: '2px dashed #444',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: '120px',
+                  fontSize: '2rem'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = '#0ea5e9'
+                  e.currentTarget.style.color = '#0ea5e9'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = '#444'
+                  e.currentTarget.style.color = 'inherit'
+                }}
               >
-                <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>+</div>
-                <p>Add Subject</p>
+                +
               </div>
             )}
           </div>
 
-          {/* Add subject form */}
           {showAddSubject && (
-            <div className="add-subject-form">
-              <form onSubmit={handleAddSubject}>
-                <input
-                  type="text"
-                  placeholder="Subject name (e.g., Physics)"
-                  value={newSubjectName}
-                  onChange={(e) => setNewSubjectName(e.target.value)}
-                  autoFocus
-                />
-                <button type="submit" className="btn btn-primary">
-                  Add
-                </button>
-                <button 
-                  type="button" 
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setShowAddSubject(false)
-                    setNewSubjectName('')
-                  }}
-                >
-                  Cancel
-                </button>
-              </form>
-            </div>
+            <form onSubmit={handleAddSubject} style={{marginBottom: '2rem'}}>
+              <input
+                type="text"
+                placeholder="Subject name (e.g., Physics)"
+                value={newSubjectName}
+                onChange={(e) => setNewSubjectName(e.target.value)}
+                autoFocus
+                style={{
+                  padding: '0.5rem',
+                  marginRight: '0.5rem',
+                  borderRadius: '4px',
+                  border: '1px solid #444',
+                  background: '#0f172a',
+                  color: '#fff',
+                  minWidth: '200px'
+                }}
+              />
+              <button type="submit" style={{padding: '0.5rem 1rem', borderRadius: '4px', background: '#0ea5e9', color: '#fff', border: 'none', cursor: 'pointer'}}>
+                Add
+              </button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowAddSubject(false)
+                  setNewSubjectName('')
+                }}
+                style={{padding: '0.5rem 1rem', marginLeft: '0.5rem', borderRadius: '4px', background: '#444', color: '#fff', border: 'none', cursor: 'pointer'}}
+              >
+                Cancel
+              </button>
+            </form>
           )}
 
           {subjects.length === 0 && !showAddSubject && (
-            <div className="empty-state">
+            <div style={{textAlign: 'center', color: '#888'}}>
               <p>No subjects yet. Add one to get started!</p>
             </div>
           )}
