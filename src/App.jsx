@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom'
 import { UserButton, useUser, SignIn } from '@clerk/clerk-react'
+import SubjectSetup from './pages/SubjectSetup'
 import SubjectDetail from './pages/SubjectDetail'
 import QuizGenerator from './pages/QuizGenerator'
 import Dashboard from './pages/Dashboard'
@@ -83,6 +84,7 @@ const AppContent = () => {
         <Routes>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/subjects" element={<Subjects />} />
+          <Route path="/subjects/new" element={<SubjectSetup />} />
           <Route path="/subjects/:subjectId" element={<SubjectDetail />} />           {/* NEW */}
           <Route path="/subjects/:subjectId/mock-paper" element={<MockPaper />} />
           <Route path="/subjects/:subjectId/quiz" element={<QuizGenerator />} />     {/* NEW */}
