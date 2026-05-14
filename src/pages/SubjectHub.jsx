@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { useUser } from '@clerk/clerk-react'
+import { useAuth } from '@clerk/clerk-react'
 import { useNavigate } from 'react-router-dom'
 
-
 const SubjectHub = () => {
-  const { user, isLoaded } = useUser()
+  const { getToken, isLoaded } = useAuth()
   const navigate = useNavigate()
   const [subjects, setSubjects] = useState([])
   const [loading, setLoading] = useState(true)
@@ -13,10 +12,10 @@ const SubjectHub = () => {
   const [newSubjectName, setNewSubjectName] = useState('')
 
   useEffect(() => {
-    if (isLoaded && user) {
+    if (isLoaded) {
       loadSubjects()
     }
-  }, [isLoaded, user])
+  }, [isLoaded, getToken])
 
   const loadSubjects = async () => {
     try {
@@ -24,7 +23,7 @@ const SubjectHub = () => {
       setError('')
       
       // Get the Clerk token
-      const token = await user.getIdToken()
+      const token = await getToken()
       
       // Include Authorization header
       const res = await fetch('/api/subjects', {
@@ -53,7 +52,7 @@ const SubjectHub = () => {
     if (!newSubjectName.trim()) return
 
     try {
-      const token = await user.getIdToken()
+      const token = await getToken()
       
       const res = await fetch('/api/subjects', {
         method: 'POST',
