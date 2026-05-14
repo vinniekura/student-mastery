@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom'
 import { UserButton, useUser, SignIn } from '@clerk/clerk-react'
+import SubjectDetail from './pages/SubjectDetail'
+import QuizGenerator from './pages/QuizGenerator'
 import Dashboard from './pages/Dashboard'
 import SubjectHub from './pages/SubjectHub'
 import MockPaper from './pages/MockPaper'
