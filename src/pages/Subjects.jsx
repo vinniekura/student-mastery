@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@clerk/clerk-react'
 import { useSubjectsStore } from '../store/subjects.js'
+// Add at the top with other imports
 
 export default function Subjects() {
   const { getToken } = useAuth()
