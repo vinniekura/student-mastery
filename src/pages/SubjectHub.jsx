@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '@clerk/clerk-react'
-import '../styles/SubjectHub.css'
 import { useNavigate } from 'react-router-dom'
 
 const SubjectHub = () => {
