@@ -8,16 +8,11 @@ import Calendar from './pages/Calendar'
 import Settings from './pages/Settings'
 import './index.css'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INNER APP (inside BrowserRouter, can use hooks)
-// ─────────────────────────────────────────────────────────────────────────────
-
 const AppContent = () => {
-  const { isSignedIn, user, isLoaded } = useUser()
+  const { isSignedIn, isLoaded } = useUser()
   const navigate = useNavigate()
   const [darkMode, setDarkMode] = useState(true)
 
-  // Redirect to sign-in if not authenticated
   useEffect(() => {
     if (isLoaded && !isSignedIn) {
       navigate('/sign-in')
@@ -29,10 +24,16 @@ const AppContent = () => {
   }
 
   if (!isSignedIn) {
-    return <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" />
+    return (
+      <div style={{ padding: '2rem' }}>
+        <SignIn 
+          routing="hash" 
+          redirectUrl="/dashboard"
+        />
+      </div>
+    )
   }
 
-  // Navigation items with emoji icons
   const navItems = [
     { path: '/dashboard', label: 'Home', icon: '🏠' },
     { path: '/subjects', label: 'Subjects', icon: '📚' },
@@ -78,11 +79,10 @@ const AppContent = () => {
       {/* ─── MAIN CONTENT ────────────────────────────────────────────────── */}
       <main className="main-content">
         <Routes>
-          <Route path="/sign-in" element={<SignIn routing="path" path="/sign-in" />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/subjects" element={<SubjectHub />} />
           <Route path="/subjects/:subjectId/mock-paper" element={<MockPaper />} />
-          <Route path="/mock-paper" element={<SubjectHub />} />
+          <Route path="/mock-paper" element={<Navigate to="/subjects" replace />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -92,10 +92,6 @@ const AppContent = () => {
     </div>
   )
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OUTER APP (wraps everything with BrowserRouter)
-// ─────────────────────────────────────────────────────────────────────────────
 
 const App = () => {
   return (
